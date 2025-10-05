@@ -28,3 +28,4 @@ src/fi
 *.dSYM/
 core
 vgcore.*
+debug_*
