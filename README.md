@@ -4,7 +4,9 @@ impl array struct and have below functions.
 
 ## functions
 
-```
+### array
+
+``` 
 array — Create an array
 fi_array_all — Checks if all array elements satisfy a callback function
 fi_array_any — Checks if at least one array element satisfies a callback function
@@ -92,3 +94,109 @@ fi_uasort — Sort an array with a user-defined comparison function and maintain
 fi_uksort — Sort an array by keys using a user-defined comparison function
 fi_usort — Sort an array by values using a user-defined comparison function
 ```
+
+### btree
+
+```
+fi_btree_create — Create a new binary search tree
+fi_btree_destroy — Destroy the entire tree and free all memory
+fi_btree_clear — Clear all nodes from the tree
+fi_btree_create_node — Create a new tree node
+fi_btree_destroy_node — Destroy a tree node
+fi_btree_insert — Insert data into the tree
+fi_btree_delete — Delete data from the tree
+fi_btree_delete_node — Delete a specific node from the tree
+fi_btree_search — Search for data in the tree
+fi_btree_find_min — Find minimum node in subtree
+fi_btree_find_max — Find maximum node in subtree
+fi_btree_successor — Find successor of a node
+fi_btree_predecessor — Find predecessor of a node
+fi_btree_size — Get the number of nodes in the tree
+fi_btree_height — Get the height of the tree
+fi_btree_node_height — Get the height of a specific node
+fi_btree_empty — Check if tree is empty
+fi_btree_contains — Check if tree contains specific data
+fi_btree_inorder — Perform inorder traversal of the tree
+fi_btree_preorder — Perform preorder traversal of the tree
+fi_btree_postorder — Perform postorder traversal of the tree
+fi_btree_level_order — Perform level-order traversal of the tree
+fi_btree_to_array — Convert tree to array (inorder)
+fi_btree_to_array_inorder — Convert tree to array using inorder traversal
+fi_btree_to_array_preorder — Convert tree to array using preorder traversal
+fi_btree_to_array_postorder — Convert tree to array using postorder traversal
+fi_btree_from_array — Build tree from array
+fi_btree_from_sorted_array — Build balanced tree from sorted array
+fi_btree_is_bst — Check if tree is a valid binary search tree
+fi_btree_print — Print tree contents
+```
+
+## Examples
+
+### Array Usage
+
+```c
+#include "fi.h"
+
+// Create an integer array
+fi_array *arr = fi_array_create(10, sizeof(int));
+
+// Add elements
+int values[] = {10, 20, 30, 40, 50};
+for (int i = 0; i < 5; i++) {
+    fi_array_push(arr, &values[i]);
+}
+
+// Search for element
+int search_val = 30;
+ssize_t index = fi_array_search(arr, &search_val);
+printf("Found at index: %zd\n", index);
+
+// Filter elements
+fi_array *filtered = fi_array_filter(arr, is_positive, NULL);
+
+// Clean up
+fi_array_destroy(arr);
+```
+
+### BTree Usage
+
+```c
+#include "fi_btree.h"
+
+// Comparison function for integers
+int compare_ints(const void *a, const void *b) {
+    const int *ia = (const int*)a;
+    const int *ib = (const int*)b;
+    return (*ia > *ib) - (*ia < *ib);
+}
+
+// Create a BTree
+fi_btree *tree = fi_btree_create(sizeof(int), compare_ints);
+
+// Insert elements
+int values[] = {50, 30, 70, 20, 40, 60, 80};
+for (int i = 0; i < 7; i++) {
+    fi_btree_insert(tree, &values[i]);
+}
+
+// Search for element
+int search_val = 40;
+fi_btree_node *found = fi_btree_search(tree, &search_val);
+printf("Found: %s\n", found ? "Yes" : "No");
+
+// Traverse tree
+printf("Inorder: ");
+fi_btree_inorder(tree, print_visit, NULL);
+
+// Clean up
+fi_btree_destroy(tree);
+```
+
+## Features
+
+- **Type-agnostic**: Works with any data type using void pointers
+- **Memory management**: Automatic allocation and cleanup
+- **BST properties**: Maintains binary search tree ordering
+- **Array integration**: Uses fi_array for level-order traversal
+- **Comprehensive API**: 90+ array functions and 25+ tree functions
+- **Performance**: O(log n) tree operations, O(1) array access
