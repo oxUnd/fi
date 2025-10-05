@@ -3,6 +3,8 @@
 impl array struct and have below functions.
 
 ## functions
+
+```
 array — Create an array
 fi_array_all — Checks if all array elements satisfy a callback function
 fi_array_any — Checks if at least one array element satisfies a callback function
@@ -89,3 +91,4 @@ fi_sort — Sort an array in ascending order
 fi_uasort — Sort an array with a user-defined comparison function and maintain index association
 fi_uksort — Sort an array by keys using a user-defined comparison function
 fi_usort — Sort an array by values using a user-defined comparison function
+```
