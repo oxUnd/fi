@@ -2,7 +2,7 @@
 bin_PROGRAMS = fi
 
 # Source files
-fi_SOURCES = main.c
+fi_SOURCES = main.c fi_array.c
 
 # Compiler flags
 fi_CFLAGS = -Wall -Wextra -std=c11 -g -I$(srcdir)/include
