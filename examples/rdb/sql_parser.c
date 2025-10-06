@@ -473,9 +473,7 @@ rdb_statement_t* sql_parse_create_table(sql_parser_t *parser, rdb_statement_t *s
         fi_array_push(stmt->columns, &column);
         
         /* Check for comma or closing parenthesis */
-        if (sql_parser_next_token(parser) != 0) break;
-        
-        
+        /* Note: sql_parse_column_definition already advanced to the next token */
         if (parser->current_token.type == SQL_TOKEN_PUNCTUATION) {
             if (parser->current_token.value[0] == ')') {
                 break;

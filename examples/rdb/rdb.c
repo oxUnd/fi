@@ -927,7 +927,16 @@ int rdb_create_table(rdb_database_t *db, const char *table_name, fi_array *colum
     rdb_table_t *table = rdb_create_table_object(table_name, columns);
     if (!table) return -1;
     
-    if (fi_map_put(db->tables, &table_name, &table) != 0) {
+    /* Allocate memory for table name to ensure it persists */
+    char *table_name_copy = malloc(strlen(table_name) + 1);
+    if (!table_name_copy) {
+        rdb_destroy_table(table);
+        return -1;
+    }
+    strcpy(table_name_copy, table_name);
+    
+    if (fi_map_put(db->tables, &table_name_copy, &table) != 0) {
+        free(table_name_copy);
         rdb_destroy_table(table);
         return -1;
     }
@@ -2878,7 +2887,18 @@ int rdb_create_table_thread_safe(rdb_database_t *db, const char *table_name, fi_
         return -1;
     }
     
-    if (fi_map_put(db->tables, &table_name, &table) != 0) {
+    /* Allocate memory for table name to ensure it persists */
+    char *table_name_copy = malloc(strlen(table_name) + 1);
+    if (!table_name_copy) {
+        rdb_table_cleanup_thread_safety(table);
+        rdb_destroy_table(table);
+        rdb_unlock_database(db);
+        return -1;
+    }
+    strcpy(table_name_copy, table_name);
+    
+    if (fi_map_put(db->tables, &table_name_copy, &table) != 0) {
+        free(table_name_copy);
         rdb_table_cleanup_thread_safety(table);
         rdb_destroy_table(table);
         rdb_unlock_database(db);
