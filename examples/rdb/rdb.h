@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
+#include <pthread.h>
 
 /* Include FI data structures */
 #include "../../src/include/fi.h"
@@ -45,6 +46,9 @@ typedef struct {
     fi_map *indexes;            /* Map of index_name -> fi_btree */
     char primary_key[64];       /* Primary key column name */
     size_t next_row_id;         /* Next available row ID */
+    /* Thread safety */
+    pthread_mutex_t rwlock;     /* Mutex for table operations */
+    pthread_mutex_t mutex;      /* Mutex for next_row_id counter */
 } rdb_table_t;
 
 /* Row data structure */
@@ -86,6 +90,9 @@ typedef struct {
     fi_map *foreign_keys;       /* Map of constraint_name -> rdb_foreign_key_t */
     rdb_transaction_manager_t *transaction_manager; /* Transaction manager */
     bool is_open;               /* Whether database is open */
+    /* Thread safety */
+    pthread_mutex_t rwlock;     /* Mutex for database operations */
+    pthread_mutex_t mutex;      /* Mutex for database state changes */
 } rdb_database_t;
 
 /* SQL statement types */
@@ -187,6 +194,9 @@ struct rdb_transaction_manager {
     size_t next_transaction_id;              /* Next available transaction ID */
     rdb_isolation_level_t default_isolation; /* Default isolation level */
     bool autocommit_enabled;                 /* Whether autocommit is enabled */
+    /* Thread safety */
+    pthread_mutex_t mutex;                   /* Mutex for transaction operations */
+    pthread_mutex_t rwlock;                  /* Mutex for transaction state */
 };
 
 /* SQL statement structure */
@@ -289,6 +299,7 @@ rdb_value_t* rdb_create_float_value(double value);
 rdb_value_t* rdb_create_string_value(const char *value);
 rdb_value_t* rdb_create_bool_value(bool value);
 rdb_value_t* rdb_create_null_value(rdb_data_type_t type);
+rdb_value_t* rdb_value_copy(const rdb_value_t *original);
 
 /* Value access */
 int64_t rdb_get_int_value(const rdb_value_t *value);
@@ -348,5 +359,33 @@ const char* rdb_transaction_state_to_string(rdb_transaction_state_t state);
 const char* rdb_isolation_level_to_string(rdb_isolation_level_t level);
 const char* rdb_operation_type_to_string(rdb_operation_type_t op_type);
 void rdb_print_transaction_status(rdb_database_t *db);
+
+/* Thread safety functions */
+int rdb_init_thread_safety(rdb_database_t *db);
+void rdb_cleanup_thread_safety(rdb_database_t *db);
+int rdb_table_init_thread_safety(rdb_table_t *table);
+void rdb_table_cleanup_thread_safety(rdb_table_t *table);
+int rdb_transaction_manager_init_thread_safety(rdb_transaction_manager_t *tm);
+void rdb_transaction_manager_cleanup_thread_safety(rdb_transaction_manager_t *tm);
+
+/* Thread-safe database operations */
+int rdb_lock_database_read(rdb_database_t *db);
+int rdb_lock_database_write(rdb_database_t *db);
+int rdb_unlock_database(rdb_database_t *db);
+int rdb_lock_table_read(rdb_table_t *table);
+int rdb_lock_table_write(rdb_table_t *table);
+int rdb_unlock_table(rdb_table_t *table);
+int rdb_lock_transaction_manager(rdb_transaction_manager_t *tm);
+int rdb_unlock_transaction_manager(rdb_transaction_manager_t *tm);
+
+/* Thread-safe versions of core operations */
+int rdb_insert_row_thread_safe(rdb_database_t *db, const char *table_name, fi_array *values);
+int rdb_update_rows_thread_safe(rdb_database_t *db, const char *table_name, fi_array *set_columns, 
+                               fi_array *set_values, fi_array *where_conditions);
+int rdb_delete_rows_thread_safe(rdb_database_t *db, const char *table_name, fi_array *where_conditions);
+fi_array* rdb_select_rows_thread_safe(rdb_database_t *db, const char *table_name, fi_array *columns, 
+                                     fi_array *where_conditions);
+int rdb_create_table_thread_safe(rdb_database_t *db, const char *table_name, fi_array *columns);
+int rdb_drop_table_thread_safe(rdb_database_t *db, const char *table_name);
 
 #endif //__RDB_H__
