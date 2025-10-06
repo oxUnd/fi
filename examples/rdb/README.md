@@ -52,6 +52,67 @@
 
 ## 架构设计
 
+### 系统架构图
+
+```mermaid
+graph TB
+    subgraph "应用层"
+        A[rdb_demo.c<br/>演示程序] 
+        B[interactive_sql.c<br/>交互式SQL客户端]
+        C[其他应用程序]
+    end
+    
+    subgraph "SQL解析层"
+        D[sql_parser.h/c<br/>SQL解析器]
+        E[词法分析器<br/>Tokenization]
+        F[语法分析器<br/>Parsing]
+        G[语句执行器<br/>Execution]
+    end
+    
+    subgraph "数据库引擎层"
+        H[rdb.h/c<br/>数据库核心]
+        I[事务管理器<br/>Transaction Manager]
+        J[锁管理器<br/>Lock Manager]
+        K[外键约束<br/>Foreign Key Constraints]
+    end
+    
+    subgraph "存储层"
+        L[表元数据<br/>fi_map]
+        M[行数据<br/>fi_array]
+        N[索引<br/>fi_btree]
+        O[外键映射<br/>fi_map]
+    end
+    
+    subgraph "FI数据结构库"
+        P[fi_array<br/>动态数组]
+        Q[fi_map<br/>哈希映射]
+        R[fi_btree<br/>B树索引]
+    end
+    
+    A --> D
+    B --> D
+    C --> D
+    
+    D --> E
+    E --> F
+    F --> G
+    G --> H
+    
+    H --> I
+    H --> J
+    H --> K
+    
+    H --> L
+    H --> M
+    H --> N
+    H --> O
+    
+    L --> Q
+    M --> P
+    N --> R
+    O --> Q
+```
+
 ### 数据存储层
 - **表元数据**: 使用 `fi_map` 存储表名到表结构的映射
 - **行数据**: 使用 `fi_array` 存储表中的行数据
@@ -61,6 +122,373 @@
 1. **rdb.h/rdb.c** - 数据库核心功能
 2. **sql_parser.h/sql_parser.c** - SQL 解析器
 3. **rdb_demo.c** - 演示程序
+
+### 主要函数调用关系图
+
+```mermaid
+graph TD
+    subgraph "应用程序入口"
+        A[main函数]
+        B[rdb_demo演示]
+        C[interactive_sql交互式客户端]
+    end
+    
+    subgraph "SQL解析器"
+        D[sql_parser_create]
+        E[sql_parse_statement]
+        F[sql_parse_create_table]
+        G[sql_parse_insert]
+        H[sql_parse_select]
+        I[sql_parse_update]
+        J[sql_parse_delete]
+        K[sql_execute_statement]
+    end
+    
+    subgraph "数据库核心操作"
+        L[rdb_create_database]
+        M[rdb_create_table]
+        N[rdb_insert_row]
+        O[rdb_select_rows]
+        P[rdb_update_rows]
+        Q[rdb_delete_rows]
+        R[rdb_drop_table]
+    end
+    
+    subgraph "事务管理"
+        S[rdb_begin_transaction]
+        T[rdb_commit_transaction]
+        U[rdb_rollback_transaction]
+        V[rdb_log_operation]
+    end
+    
+    subgraph "索引操作"
+        W[rdb_create_index]
+        X[rdb_drop_index]
+        Y[rdb_get_index]
+    end
+    
+    subgraph "外键约束"
+        Z[rdb_add_foreign_key]
+        AA[rdb_validate_foreign_key]
+        BB[rdb_enforce_foreign_key_constraints]
+    end
+    
+    A --> B
+    A --> C
+    
+    B --> D
+    C --> D
+    
+    D --> E
+    E --> F
+    E --> G
+    E --> H
+    E --> I
+    E --> J
+    
+    F --> K
+    G --> K
+    H --> K
+    I --> K
+    J --> K
+    
+    K --> L
+    K --> M
+    K --> N
+    K --> O
+    K --> P
+    K --> Q
+    K --> R
+    
+    M --> S
+    N --> S
+    P --> S
+    Q --> S
+    R --> S
+    
+    S --> T
+    S --> U
+    S --> V
+    
+    M --> W
+    R --> X
+    O --> Y
+    
+    M --> Z
+    N --> AA
+    P --> AA
+    Q --> AA
+    AA --> BB
+```
+
+### SQL处理流程数据流图
+
+```mermaid
+flowchart TD
+    A[用户输入SQL语句] --> B[sql_parser_create]
+    B --> C[词法分析<br/>sql_parser_next_token]
+    C --> D{识别Token类型}
+    
+    D -->|关键字| E[SQL关键字处理]
+    D -->|标识符| F[表名/列名处理]
+    D -->|字符串| G[字符串值处理]
+    D -->|数字| H[数值处理]
+    D -->|操作符| I[操作符处理]
+    
+    E --> J[语法分析<br/>sql_parse_statement]
+    F --> J
+    G --> J
+    H --> J
+    I --> J
+    
+    J --> K{语句类型判断}
+    
+    K -->|CREATE TABLE| L[sql_parse_create_table]
+    K -->|INSERT| M[sql_parse_insert]
+    K -->|SELECT| N[sql_parse_select]
+    K -->|UPDATE| O[sql_parse_update]
+    K -->|DELETE| P[sql_parse_delete]
+    K -->|DROP| Q[sql_parse_drop_table]
+    
+    L --> R[sql_execute_statement]
+    M --> R
+    N --> R
+    O --> R
+    P --> R
+    Q --> R
+    
+    R --> S{执行操作类型}
+    
+    S -->|CREATE TABLE| T[rdb_create_table]
+    S -->|INSERT| U[rdb_insert_row]
+    S -->|SELECT| V[rdb_select_rows]
+    S -->|UPDATE| W[rdb_update_rows]
+    S -->|DELETE| X[rdb_delete_rows]
+    S -->|DROP| Y[rdb_drop_table]
+    
+    T --> Z[事务管理]
+    U --> Z
+    W --> Z
+    X --> Z
+    Y --> Z
+    
+    Z --> AA{是否在事务中}
+    AA -->|是| BB[记录操作日志]
+    AA -->|否| CC[直接执行]
+    
+    BB --> DD[更新索引]
+    CC --> DD
+    
+    DD --> EE[外键约束检查]
+    EE --> FF[返回执行结果]
+    
+    V --> GG[查询优化]
+    GG --> HH[使用索引加速]
+    HH --> II[返回查询结果]
+    
+    FF --> JJ[输出结果给用户]
+    II --> JJ
+```
+
+### 核心数据结构关系图
+
+```mermaid
+erDiagram
+    RDB_DATABASE {
+        char name[128]
+        fi_map tables
+        fi_map foreign_keys
+        rdb_transaction_manager_t transaction_manager
+        bool is_open
+        pthread_mutex_t rwlock
+        pthread_mutex_t mutex
+    }
+    
+    RDB_TABLE {
+        char name[64]
+        fi_array columns
+        fi_array rows
+        fi_map indexes
+        char primary_key[64]
+        size_t next_row_id
+        pthread_mutex_t rwlock
+        pthread_mutex_t mutex
+    }
+    
+    RDB_COLUMN {
+        char name[64]
+        rdb_data_type_t type
+        size_t max_length
+        bool nullable
+        bool primary_key
+        bool unique
+        char default_value[256]
+        char foreign_table[64]
+        char foreign_column[64]
+        bool is_foreign_key
+    }
+    
+    RDB_ROW {
+        size_t row_id
+        fi_array values
+    }
+    
+    RDB_VALUE {
+        rdb_data_type_t type
+        union data
+        bool is_null
+    }
+    
+    RDB_FOREIGN_KEY {
+        char constraint_name[64]
+        char table_name[64]
+        char column_name[64]
+        char ref_table_name[64]
+        char ref_column_name[64]
+        bool on_delete_cascade
+        bool on_update_cascade
+    }
+    
+    RDB_TRANSACTION {
+        size_t transaction_id
+        rdb_transaction_state_t state
+        rdb_isolation_level_t isolation
+        fi_array log_entries
+        time_t start_time
+        time_t end_time
+        bool is_autocommit
+    }
+    
+    RDB_STATEMENT {
+        rdb_stmt_type_t type
+        char table_name[64]
+        fi_array columns
+        fi_array values
+        fi_array where_conditions
+        fi_array select_columns
+        char index_name[64]
+        char index_column[64]
+        fi_array from_tables
+        fi_array join_conditions
+        fi_array order_by
+        size_t limit_value
+        size_t offset_value
+        char foreign_key_name[64]
+        rdb_foreign_key_t foreign_key
+    }
+    
+    RDB_DATABASE ||--o{ RDB_TABLE : "contains"
+    RDB_DATABASE ||--o{ RDB_FOREIGN_KEY : "manages"
+    RDB_DATABASE ||--|| RDB_TRANSACTION : "has current"
+    
+    RDB_TABLE ||--o{ RDB_COLUMN : "has columns"
+    RDB_TABLE ||--o{ RDB_ROW : "contains rows"
+    RDB_TABLE ||--o{ FI_BTREE : "has indexes"
+    
+    RDB_ROW ||--o{ RDB_VALUE : "contains values"
+    
+    RDB_FOREIGN_KEY }o--|| RDB_TABLE : "references"
+    RDB_FOREIGN_KEY }o--|| RDB_COLUMN : "constrains"
+    
+    RDB_TRANSACTION ||--o{ RDB_STATEMENT : "executes"
+```
+
+### 内存布局图
+
+```mermaid
+graph TB
+    subgraph "数据库实例 (rdb_database_t)"
+        A[数据库名称<br/>char name[128]]
+        B[表映射<br/>fi_map *tables]
+        C[外键映射<br/>fi_map *foreign_keys]
+        D[事务管理器<br/>rdb_transaction_manager_t*]
+        E[读写锁<br/>pthread_mutex_t rwlock]
+    end
+    
+    subgraph "表映射 (fi_map)"
+        F[表名1 → rdb_table_t*]
+        G[表名2 → rdb_table_t*]
+        H[表名N → rdb_table_t*]
+    end
+    
+    subgraph "表结构 (rdb_table_t)"
+        I[表名<br/>char name[64]]
+        J[列定义数组<br/>fi_array *columns]
+        K[行数据数组<br/>fi_array *rows]
+        L[索引映射<br/>fi_map *indexes]
+        M[主键列名<br/>char primary_key[64]]
+        N[行ID计数器<br/>size_t next_row_id]
+    end
+    
+    subgraph "列定义数组 (fi_array)"
+        O[rdb_column_t*]
+        P[rdb_column_t*]
+        Q[rdb_column_t*]
+    end
+    
+    subgraph "行数据数组 (fi_array)"
+        R[rdb_row_t*]
+        S[rdb_row_t*]
+        T[rdb_row_t*]
+    end
+    
+    subgraph "行结构 (rdb_row_t)"
+        U[行ID<br/>size_t row_id]
+        V[值数组<br/>fi_array *values]
+    end
+    
+    subgraph "值数组 (fi_array)"
+        W[rdb_value_t*]
+        X[rdb_value_t*]
+        Y[rdb_value_t*]
+    end
+    
+    subgraph "索引映射 (fi_map)"
+        Z[索引名1 → fi_btree*]
+        AA[索引名2 → fi_btree*]
+    end
+    
+    subgraph "B树索引 (fi_btree)"
+        BB[键值对存储<br/>支持范围查询]
+    end
+    
+    A --> B
+    B --> F
+    B --> G
+    B --> H
+    
+    F --> I
+    I --> J
+    I --> K
+    I --> L
+    I --> M
+    I --> N
+    
+    J --> O
+    J --> P
+    J --> Q
+    
+    K --> R
+    K --> S
+    K --> T
+    
+    R --> U
+    R --> V
+    S --> U
+    S --> V
+    T --> U
+    T --> V
+    
+    V --> W
+    V --> X
+    V --> Y
+    
+    L --> Z
+    L --> AA
+    
+    Z --> BB
+    AA --> BB
+```
 
 ## 项目文件结构
 
