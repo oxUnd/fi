@@ -74,7 +74,19 @@ typedef enum {
     SQL_KW_FOREIGN,
     SQL_KW_REFERENCES,
     SQL_KW_CASCADE,
-    SQL_KW_CONSTRAINT
+    SQL_KW_CONSTRAINT,
+    SQL_KW_BEGIN,
+    SQL_KW_COMMIT,
+    SQL_KW_ROLLBACK,
+    SQL_KW_TRANSACTION,
+    SQL_KW_AUTOCOMMIT,
+    SQL_KW_ISOLATION,
+    SQL_KW_LEVEL,
+    SQL_KW_READ,
+    SQL_KW_UNCOMMITTED,
+    SQL_KW_COMMITTED,
+    SQL_KW_REPEATABLE,
+    SQL_KW_SERIALIZABLE
 } sql_keyword_t;
 
 /* SQL operators */
@@ -118,6 +130,9 @@ rdb_statement_t* sql_parse_update(sql_parser_t *parser);
 rdb_statement_t* sql_parse_delete(sql_parser_t *parser);
 rdb_statement_t* sql_parse_create_index(sql_parser_t *parser);
 rdb_statement_t* sql_parse_drop_index(sql_parser_t *parser);
+rdb_statement_t* sql_parse_begin_transaction(sql_parser_t *parser);
+rdb_statement_t* sql_parse_commit_transaction(sql_parser_t *parser);
+rdb_statement_t* sql_parse_rollback_transaction(sql_parser_t *parser);
 
 /* Helper functions */
 sql_keyword_t sql_get_keyword(const char *keyword);
@@ -143,6 +158,9 @@ int sql_parse_from_clause(sql_parser_t *parser, fi_array *from_tables);
 /* Foreign key parsing */
 int sql_parse_foreign_key_definition(sql_parser_t *parser, rdb_foreign_key_t *foreign_key);
 int sql_parse_constraint_definition(sql_parser_t *parser, rdb_foreign_key_t *foreign_key);
+
+/* Transaction parsing */
+int sql_parse_isolation_level(sql_parser_t *parser, rdb_isolation_level_t *level);
 
 /* Value parsing */
 rdb_value_t* sql_parse_value(sql_parser_t *parser);

@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <time.h>
 
 /* Include FI data structures */
 #include "../../src/include/fi.h"
@@ -75,11 +76,15 @@ typedef struct {
     bool on_update_cascade;     /* CASCADE on update */
 } rdb_foreign_key_t;
 
+/* Forward declaration */
+typedef struct rdb_transaction_manager rdb_transaction_manager_t;
+
 /* Database instance */
 typedef struct {
     char name[128];             /* Database name */
     fi_map *tables;             /* Map of table_name -> rdb_table_t */
     fi_map *foreign_keys;       /* Map of constraint_name -> rdb_foreign_key_t */
+    rdb_transaction_manager_t *transaction_manager; /* Transaction manager */
     bool is_open;               /* Whether database is open */
 } rdb_database_t;
 
@@ -94,7 +99,10 @@ typedef enum {
     RDB_STMT_CREATE_INDEX,
     RDB_STMT_DROP_INDEX,
     RDB_STMT_ADD_FOREIGN_KEY,
-    RDB_STMT_DROP_FOREIGN_KEY
+    RDB_STMT_DROP_FOREIGN_KEY,
+    RDB_STMT_BEGIN_TRANSACTION,
+    RDB_STMT_COMMIT_TRANSACTION,
+    RDB_STMT_ROLLBACK_TRANSACTION
 } rdb_stmt_type_t;
 
 /* JOIN types */
@@ -104,6 +112,33 @@ typedef enum {
     RDB_JOIN_RIGHT,
     RDB_JOIN_FULL
 } rdb_join_type_t;
+
+/* Transaction isolation levels */
+typedef enum {
+    RDB_ISOLATION_READ_UNCOMMITTED = 1,
+    RDB_ISOLATION_READ_COMMITTED,
+    RDB_ISOLATION_REPEATABLE_READ,
+    RDB_ISOLATION_SERIALIZABLE
+} rdb_isolation_level_t;
+
+/* Transaction states */
+typedef enum {
+    RDB_TRANSACTION_ACTIVE = 1,
+    RDB_TRANSACTION_COMMITTED,
+    RDB_TRANSACTION_ABORTED,
+    RDB_TRANSACTION_ROLLED_BACK
+} rdb_transaction_state_t;
+
+/* Transaction operation types */
+typedef enum {
+    RDB_OP_INSERT = 1,
+    RDB_OP_UPDATE,
+    RDB_OP_DELETE,
+    RDB_OP_CREATE_TABLE,
+    RDB_OP_DROP_TABLE,
+    RDB_OP_CREATE_INDEX,
+    RDB_OP_DROP_INDEX
+} rdb_operation_type_t;
 
 /* JOIN condition */
 typedef struct {
@@ -120,6 +155,39 @@ typedef struct {
     fi_array *table_names;      /* Array of table names in result */
     fi_map *values;             /* Map of "table.column" -> rdb_value_t */
 } rdb_result_row_t;
+
+/* Transaction log entry */
+typedef struct {
+    rdb_operation_type_t operation_type;  /* Type of operation */
+    char table_name[64];                  /* Table name */
+    size_t row_id;                        /* Row ID (for row operations) */
+    rdb_row_t *old_row;                   /* Original row data (for rollback) */
+    rdb_row_t *new_row;                   /* New row data */
+    char index_name[64];                  /* Index name (for index operations) */
+    char column_name[64];                 /* Column name (for column operations) */
+    rdb_column_t *column_def;             /* Column definition (for schema changes) */
+    void *additional_data;                /* Additional operation-specific data */
+} rdb_transaction_log_entry_t;
+
+/* Transaction structure */
+typedef struct {
+    size_t transaction_id;               /* Unique transaction ID */
+    rdb_transaction_state_t state;       /* Current transaction state */
+    rdb_isolation_level_t isolation;     /* Isolation level */
+    fi_array *log_entries;               /* Array of log entries for rollback */
+    time_t start_time;                   /* Transaction start time */
+    time_t end_time;                     /* Transaction end time */
+    bool is_autocommit;                  /* Whether this is an autocommit transaction */
+} rdb_transaction_t;
+
+/* Transaction manager */
+struct rdb_transaction_manager {
+    rdb_transaction_t *current_transaction;  /* Current active transaction */
+    fi_array *transaction_history;           /* History of completed transactions */
+    size_t next_transaction_id;              /* Next available transaction ID */
+    rdb_isolation_level_t default_isolation; /* Default isolation level */
+    bool autocommit_enabled;                 /* Whether autocommit is enabled */
+};
 
 /* SQL statement structure */
 typedef struct {
@@ -243,5 +311,42 @@ rdb_result_row_t* rdb_create_result_row(size_t row_id, fi_array *table_names, fi
 bool rdb_row_matches_join_condition(const rdb_row_t *left_row, const rdb_row_t *right_row,
                                    const rdb_join_condition_t *condition, 
                                    const rdb_table_t *left_table, const rdb_table_t *right_table);
+
+/* Transaction management functions */
+rdb_transaction_manager_t* rdb_create_transaction_manager(void);
+void rdb_destroy_transaction_manager(rdb_transaction_manager_t *tm);
+int rdb_begin_transaction(rdb_database_t *db, rdb_isolation_level_t isolation);
+int rdb_commit_transaction(rdb_database_t *db);
+int rdb_rollback_transaction(rdb_database_t *db);
+rdb_transaction_t* rdb_get_current_transaction(rdb_database_t *db);
+bool rdb_is_in_transaction(rdb_database_t *db);
+int rdb_set_autocommit(rdb_database_t *db, bool enabled);
+int rdb_set_isolation_level(rdb_database_t *db, rdb_isolation_level_t level);
+
+/* Transaction logging functions */
+int rdb_log_operation(rdb_database_t *db, rdb_operation_type_t op_type, const char *table_name, 
+                     size_t row_id, rdb_row_t *old_row, rdb_row_t *new_row);
+int rdb_rollback_operations(rdb_database_t *db, rdb_transaction_t *transaction);
+
+/* Transaction-aware database operations */
+int rdb_insert_row_transactional(rdb_database_t *db, const char *table_name, fi_array *values);
+int rdb_update_rows_transactional(rdb_database_t *db, const char *table_name, fi_array *set_columns, 
+                                 fi_array *set_values, fi_array *where_conditions);
+int rdb_delete_rows_transactional(rdb_database_t *db, const char *table_name, fi_array *where_conditions);
+int rdb_create_table_transactional(rdb_database_t *db, const char *table_name, fi_array *columns);
+int rdb_drop_table_transactional(rdb_database_t *db, const char *table_name);
+
+/* Transaction log entry management */
+rdb_transaction_log_entry_t* rdb_create_transaction_log_entry(rdb_operation_type_t op_type, 
+                                                             const char *table_name, size_t row_id,
+                                                             rdb_row_t *old_row, rdb_row_t *new_row);
+void rdb_destroy_transaction_log_entry(rdb_transaction_log_entry_t *entry);
+void rdb_transaction_log_entry_free(void *entry);
+
+/* Transaction utility functions */
+const char* rdb_transaction_state_to_string(rdb_transaction_state_t state);
+const char* rdb_isolation_level_to_string(rdb_isolation_level_t level);
+const char* rdb_operation_type_to_string(rdb_operation_type_t op_type);
+void rdb_print_transaction_status(rdb_database_t *db);
 
 #endif //__RDB_H__

@@ -260,7 +260,11 @@ bool sql_is_keyword(const char *word) {
         "UPDATE", "SET", "DELETE", "CREATE", "TABLE", "INDEX",
         "DROP", "INT", "FLOAT", "VARCHAR", "TEXT", "BOOLEAN",
         "PRIMARY", "KEY", "UNIQUE", "NOT", "NULL", "DEFAULT",
-        "AND", "OR", "ORDER", "BY", "LIMIT", "OFFSET"
+        "AND", "OR", "ORDER", "BY", "LIMIT", "OFFSET", "JOIN",
+        "INNER", "LEFT", "RIGHT", "FULL", "ON", "FOREIGN",
+        "REFERENCES", "CASCADE", "CONSTRAINT", "BEGIN", "COMMIT",
+        "ROLLBACK", "TRANSACTION", "AUTOCOMMIT", "ISOLATION", "LEVEL",
+        "READ", "UNCOMMITTED", "COMMITTED", "REPEATABLE", "SERIALIZABLE"
     };
     
     for (size_t i = 0; i < sizeof(keywords) / sizeof(keywords[0]); i++) {
@@ -306,7 +310,11 @@ sql_keyword_t sql_get_keyword(const char *keyword) {
         "UPDATE", "SET", "DELETE", "CREATE", "TABLE", "INDEX",
         "DROP", "INT", "FLOAT", "VARCHAR", "TEXT", "BOOLEAN",
         "PRIMARY", "KEY", "UNIQUE", "NOT", "NULL", "DEFAULT",
-        "AND", "OR", "ORDER", "BY", "LIMIT", "OFFSET"
+        "AND", "OR", "ORDER", "BY", "LIMIT", "OFFSET", "JOIN",
+        "INNER", "LEFT", "RIGHT", "FULL", "ON", "FOREIGN",
+        "REFERENCES", "CASCADE", "CONSTRAINT", "BEGIN", "COMMIT",
+        "ROLLBACK", "TRANSACTION", "AUTOCOMMIT", "ISOLATION", "LEVEL",
+        "READ", "UNCOMMITTED", "COMMITTED", "REPEATABLE", "SERIALIZABLE"
     };
     
     for (size_t i = 0; i < sizeof(keywords) / sizeof(keywords[0]); i++) {
@@ -358,6 +366,12 @@ rdb_statement_t* sql_parse_statement(sql_parser_t *parser) {
             return sql_parse_update(parser);
         case SQL_KW_DELETE:
             return sql_parse_delete(parser);
+        case SQL_KW_BEGIN:
+            return sql_parse_begin_transaction(parser);
+        case SQL_KW_COMMIT:
+            return sql_parse_commit_transaction(parser);
+        case SQL_KW_ROLLBACK:
+            return sql_parse_rollback_transaction(parser);
         default:
             sql_parser_set_error(parser, "Unsupported SQL statement type");
             return NULL;
@@ -681,4 +695,179 @@ void sql_statement_free(rdb_statement_t *stmt) {
     }
     
     free(stmt);
+}
+
+/* Transaction parsing functions */
+rdb_statement_t* sql_parse_begin_transaction(sql_parser_t *parser) {
+    if (!parser) return NULL;
+    
+    rdb_statement_t *stmt = malloc(sizeof(rdb_statement_t));
+    if (!stmt) return NULL;
+    
+    /* Initialize statement */
+    stmt->type = RDB_STMT_BEGIN_TRANSACTION;
+    stmt->table_name[0] = '\0';
+    stmt->columns = NULL;
+    stmt->values = NULL;
+    stmt->where_conditions = NULL;
+    stmt->select_columns = NULL;
+    stmt->index_name[0] = '\0';
+    stmt->index_column[0] = '\0';
+    stmt->from_tables = NULL;
+    stmt->join_conditions = NULL;
+    stmt->order_by = NULL;
+    stmt->limit_value = 0;
+    stmt->offset_value = 0;
+    stmt->foreign_key_name[0] = '\0';
+    stmt->foreign_key = NULL;
+    
+    /* Parse optional TRANSACTION keyword */
+    if (sql_parser_next_token(parser) == 0 && 
+        parser->current_token.type == SQL_TOKEN_KEYWORD &&
+        sql_get_keyword(parser->current_token.value) == SQL_KW_TRANSACTION) {
+        sql_parser_next_token(parser);
+    }
+    
+    return stmt;
+}
+
+rdb_statement_t* sql_parse_commit_transaction(sql_parser_t *parser) {
+    if (!parser) return NULL;
+    
+    rdb_statement_t *stmt = malloc(sizeof(rdb_statement_t));
+    if (!stmt) return NULL;
+    
+    /* Initialize statement */
+    stmt->type = RDB_STMT_COMMIT_TRANSACTION;
+    stmt->table_name[0] = '\0';
+    stmt->columns = NULL;
+    stmt->values = NULL;
+    stmt->where_conditions = NULL;
+    stmt->select_columns = NULL;
+    stmt->index_name[0] = '\0';
+    stmt->index_column[0] = '\0';
+    stmt->from_tables = NULL;
+    stmt->join_conditions = NULL;
+    stmt->order_by = NULL;
+    stmt->limit_value = 0;
+    stmt->offset_value = 0;
+    stmt->foreign_key_name[0] = '\0';
+    stmt->foreign_key = NULL;
+    
+    /* Parse optional TRANSACTION keyword */
+    if (sql_parser_next_token(parser) == 0 && 
+        parser->current_token.type == SQL_TOKEN_KEYWORD &&
+        sql_get_keyword(parser->current_token.value) == SQL_KW_TRANSACTION) {
+        sql_parser_next_token(parser);
+    }
+    
+    return stmt;
+}
+
+rdb_statement_t* sql_parse_rollback_transaction(sql_parser_t *parser) {
+    if (!parser) return NULL;
+    
+    rdb_statement_t *stmt = malloc(sizeof(rdb_statement_t));
+    if (!stmt) return NULL;
+    
+    /* Initialize statement */
+    stmt->type = RDB_STMT_ROLLBACK_TRANSACTION;
+    stmt->table_name[0] = '\0';
+    stmt->columns = NULL;
+    stmt->values = NULL;
+    stmt->where_conditions = NULL;
+    stmt->select_columns = NULL;
+    stmt->index_name[0] = '\0';
+    stmt->index_column[0] = '\0';
+    stmt->from_tables = NULL;
+    stmt->join_conditions = NULL;
+    stmt->order_by = NULL;
+    stmt->limit_value = 0;
+    stmt->offset_value = 0;
+    stmt->foreign_key_name[0] = '\0';
+    stmt->foreign_key = NULL;
+    
+    /* Parse optional TRANSACTION keyword */
+    if (sql_parser_next_token(parser) == 0 && 
+        parser->current_token.type == SQL_TOKEN_KEYWORD &&
+        sql_get_keyword(parser->current_token.value) == SQL_KW_TRANSACTION) {
+        sql_parser_next_token(parser);
+    }
+    
+    return stmt;
+}
+
+int sql_parse_isolation_level(sql_parser_t *parser, rdb_isolation_level_t *level) {
+    if (!parser || !level) return -1;
+    
+    if (sql_parser_next_token(parser) != 0) return -1;
+    
+    if (parser->current_token.type != SQL_TOKEN_KEYWORD) {
+        sql_parser_set_error(parser, "Expected isolation level keyword");
+        return -1;
+    }
+    
+    sql_keyword_t keyword = sql_get_keyword(parser->current_token.value);
+    
+    switch (keyword) {
+        case SQL_KW_READ:
+            /* Check for READ UNCOMMITTED or READ COMMITTED */
+            if (sql_parser_next_token(parser) != 0) return -1;
+            if (parser->current_token.type != SQL_TOKEN_KEYWORD) {
+                sql_parser_set_error(parser, "Expected UNCOMMITTED or COMMITTED after READ");
+                return -1;
+            }
+            
+            sql_keyword_t read_keyword = sql_get_keyword(parser->current_token.value);
+            if (read_keyword == SQL_KW_UNCOMMITTED) {
+                *level = RDB_ISOLATION_READ_UNCOMMITTED;
+            } else if (read_keyword == SQL_KW_COMMITTED) {
+                *level = RDB_ISOLATION_READ_COMMITTED;
+            } else {
+                sql_parser_set_error(parser, "Expected UNCOMMITTED or COMMITTED after READ");
+                return -1;
+            }
+            break;
+            
+        case SQL_KW_REPEATABLE:
+            /* Check for REPEATABLE READ */
+            if (sql_parser_next_token(parser) != 0) return -1;
+            if (parser->current_token.type != SQL_TOKEN_KEYWORD ||
+                sql_get_keyword(parser->current_token.value) != SQL_KW_READ) {
+                sql_parser_set_error(parser, "Expected READ after REPEATABLE");
+                return -1;
+            }
+            *level = RDB_ISOLATION_REPEATABLE_READ;
+            break;
+            
+        case SQL_KW_SERIALIZABLE:
+            *level = RDB_ISOLATION_SERIALIZABLE;
+            break;
+            
+        default:
+            sql_parser_set_error(parser, "Invalid isolation level");
+            return -1;
+    }
+    
+    return 0;
+}
+
+/* Statement execution function */
+int sql_execute_statement(rdb_database_t *db, const rdb_statement_t *stmt) {
+    if (!db || !stmt) return -1;
+    
+    switch (stmt->type) {
+        case RDB_STMT_BEGIN_TRANSACTION:
+            return rdb_begin_transaction(db, RDB_ISOLATION_READ_COMMITTED);
+            
+        case RDB_STMT_COMMIT_TRANSACTION:
+            return rdb_commit_transaction(db);
+            
+        case RDB_STMT_ROLLBACK_TRANSACTION:
+            return rdb_rollback_transaction(db);
+            
+        default:
+            printf("Error: Unsupported statement type for execution\n");
+            return -1;
+    }
 }
