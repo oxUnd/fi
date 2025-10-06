@@ -1595,27 +1595,42 @@ static int rdb_persistence_save_table(rdb_persistence_manager_t *pm, rdb_table_t
 static int rdb_persistence_load_tables(rdb_persistence_manager_t *pm, rdb_database_t *db) {
     if (!pm || !db) return -1;
     
-    /* For now, we'll load tables from individual files */
-    /* In a more sophisticated implementation, we'd have a table index */
+    /* Open data directory to discover all table files */
+    DIR *dir = opendir(pm->data_dir);
+    if (!dir) {
+        printf("DEBUG: Could not open data directory: %s\n", pm->data_dir);
+        return -1;
+    }
     
-    /* Try to load common table names */
-    const char *common_tables[] = {"users", "products", "orders", "customers", "test_table", NULL};
+    struct dirent *entry;
+    int tables_loaded = 0;
     
-    for (int i = 0; common_tables[i] != NULL; i++) {
-        char table_file_path[512];
-        sprintf(table_file_path, "%s/table_%s.rdb", pm->data_dir, common_tables[i]);
-        
-        if (rdb_persistence_file_exists(table_file_path)) {
-            printf("DEBUG: Loading table: %s\n", common_tables[i]);
-            if (rdb_persistence_load_table(pm, db, common_tables[i]) != 0) {
-                printf("DEBUG: Failed to load table: %s\n", common_tables[i]);
-                /* Continue loading other tables even if one fails */
-                continue;
+    while ((entry = readdir(dir)) != NULL) {
+        /* Look for table files with pattern "table_*.rdb" */
+        if (strncmp(entry->d_name, "table_", 6) == 0 && 
+            strcmp(entry->d_name + strlen(entry->d_name) - 4, ".rdb") == 0) {
+            
+            /* Extract table name from filename */
+            char table_name[256];
+            size_t name_len = strlen(entry->d_name) - 10; /* "table_" (6) + ".rdb" (4) */
+            if (name_len > 0 && name_len < sizeof(table_name)) {
+                strncpy(table_name, entry->d_name + 6, name_len);
+                table_name[name_len] = '\0';
+                
+                printf("DEBUG: Loading table: %s\n", table_name);
+                if (rdb_persistence_load_table(pm, db, table_name) != 0) {
+                    printf("DEBUG: Failed to load table: %s\n", table_name);
+                    /* Continue loading other tables even if one fails */
+                    continue;
+                }
+                printf("DEBUG: Successfully loaded table: %s\n", table_name);
+                tables_loaded++;
             }
-            printf("DEBUG: Successfully loaded table: %s\n", common_tables[i]);
         }
     }
     
+    closedir(dir);
+    printf("DEBUG: Loaded %d tables from disk\n", tables_loaded);
     return 0;
 }
 
@@ -1664,8 +1679,17 @@ static int rdb_persistence_load_table(rdb_persistence_manager_t *pm, rdb_databas
     
     free(table_data);
     
+    /* Allocate memory for table name to ensure it persists */
+    char *table_name_copy = malloc(strlen(table_name) + 1);
+    if (!table_name_copy) {
+        rdb_destroy_table(table);
+        return -1;
+    }
+    strcpy(table_name_copy, table_name);
+    
     /* Add table to database */
-    if (fi_map_put(db->tables, &table_name, &table) != 0) {
+    if (fi_map_put(db->tables, &table_name_copy, &table) != 0) {
+        free(table_name_copy);
         rdb_destroy_table(table);
         return -1;
     }
