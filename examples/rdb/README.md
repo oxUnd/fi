@@ -4,13 +4,13 @@
 
 ## 项目状态
 
-由于 FI 库在处理字符串键时存在一些技术问题，本项目提供了多个版本的实现：
+本项目实现了一个完整的关系型数据库系统，包含以下核心组件：
 
-1. **完整版本** (`rdb.h`, `rdb.c`) - 完整的关系型数据库实现，包含所有功能
-2. **简化版本** (`rdb_simple.h`, `rdb_simple.c`) - 使用整数键的简化实现
-3. **最小版本** (`rdb_minimal.h`, `rdb_minimal.c`) - 最基本的数据库功能演示
+1. **数据库引擎** (`rdb.h`, `rdb.c`) - 完整的关系型数据库实现
+2. **SQL 解析器** (`sql_parser.h`, `sql_parser.c`) - 支持基本 SQL 语句解析
+3. **演示程序** (`rdb_demo.c`) - 展示数据库功能的完整演示
 
-**推荐使用最小版本进行学习和测试**，因为它稳定可靠且易于理解。
+该实现稳定可靠，适合学习和理解数据库系统的基本原理。
 
 ## 功能特性
 
@@ -29,14 +29,22 @@
 - `BOOLEAN` - 布尔类型
 
 ### 支持的 SQL 语句
-- `CREATE TABLE` - 创建表
+- `CREATE TABLE` - 创建表，支持列定义、主键、唯一约束
 - `DROP TABLE` - 删除表
-- `INSERT INTO` - 插入数据
-- `SELECT` - 查询数据
-- `UPDATE` - 更新数据
-- `DELETE` - 删除数据
+- `INSERT INTO` - 插入数据，支持多行插入
+- `SELECT` - 查询数据，支持 WHERE 条件、ORDER BY、LIMIT
+- `UPDATE` - 更新数据，支持 WHERE 条件
+- `DELETE` - 删除数据，支持 WHERE 条件
 - `CREATE INDEX` - 创建索引
 - `DROP INDEX` - 删除索引
+
+### SQL 解析器特性
+- **词法分析**: 完整的 SQL 词法分析器，支持关键字、标识符、字符串、数字、操作符
+- **语法分析**: 支持复杂 SQL 语句的语法解析
+- **操作符支持**: `=`, `!=`, `<`, `>`, `<=`, `>=`, `LIKE`, `IS`, `IN`
+- **逻辑连接符**: `AND`, `OR`
+- **数据类型**: 自动识别和转换数据类型
+- **错误处理**: 详细的语法错误报告
 
 ## 架构设计
 
@@ -50,6 +58,27 @@
 2. **sql_parser.h/sql_parser.c** - SQL 解析器
 3. **rdb_demo.c** - 演示程序
 
+## 项目文件结构
+
+```
+examples/rdb/
+├── README.md              # 项目文档
+├── SUMMARY.md             # 项目总结
+├── rdb.h                  # 数据库头文件
+├── rdb.c                  # 数据库实现
+├── sql_parser.h           # SQL 解析器头文件
+├── sql_parser.c           # SQL 解析器实现
+├── rdb_demo.c             # 演示程序
+├── Makefile               # 构建文件
+├── debug_map.c            # 调试工具
+├── debug_test.c           # 调试测试
+└── build/                 # 编译输出目录
+    ├── rdb_demo           # 演示程序可执行文件
+    ├── rdb.o              # 数据库对象文件
+    ├── sql_parser.o       # SQL 解析器对象文件
+    └── rdb_demo.o         # 演示程序对象文件
+```
+
 ## 编译和运行
 
 ### 前提条件
@@ -59,64 +88,42 @@ cd ../../src
 make
 ```
 
-### 编译最小版本（推荐）
+### 编译和运行
 ```bash
-# 编译最小版本
-gcc -Wall -Wextra -std=c99 -g -O2 -I../../src/include -I. -c rdb_minimal.c -o build/rdb_minimal.o
-gcc -Wall -Wextra -std=c99 -g -O2 -I../../src/include -I. -c minimal_demo.c -o build/minimal_demo.o
-gcc build/minimal_demo.o build/rdb_minimal.o -L../../src/.libs -static -lfi -lm -o build/minimal_demo
+# 编译项目
+make
 
-# 运行演示
-./build/minimal_demo
+# 运行演示程序
+make run
+
+# 使用 valgrind 检查内存泄漏
+make valgrind
+
+# 清理编译文件
+make clean
 ```
 
-### 编译简化版本
+### 其他可用命令
 ```bash
-# 编译简化版本
-gcc -Wall -Wextra -std=c99 -g -O2 -I../../src/include -I. -c rdb_simple.c -o build/rdb_simple.o
-gcc -Wall -Wextra -std=c99 -g -O2 -I../../src/include -I. -c simple_demo.c -o build/simple_demo.o
-gcc build/simple_demo.o build/rdb_simple.o -L../../src/.libs -static -lfi -lm -o build/simple_demo
+# 构建静态库
+make lib
 
-# 运行演示
-./build/simple_demo
-```
+# 安装到系统
+make install
 
-### 编译完整版本
-```bash
-make -f Makefile.simple all
-make -f Makefile.simple run
-```
+# 从系统卸载
+make uninstall
 
-### 清理
-```bash
-rm -rf build/
+# 显示帮助信息
+make help
 ```
 
 ## 使用示例
 
-### 1. 最小版本数据库操作
+### 1. 基本数据库操作
 
 ```c
-#include "rdb_minimal.h"
-
-// 创建数据库
-rdb_database_t *db = rdb_create_database("my_db");
-
-// 创建表
-rdb_create_table(db, "users");
-rdb_create_table(db, "products");
-
-// 打印数据库信息
-rdb_print_database_info(db);
-
-// 清理
-rdb_destroy_database(db);
-```
-
-### 2. 简化版本数据库操作
-
-```c
-#include "rdb_simple.h"
+#include "rdb.h"
 
 // 创建数据库
 rdb_database_t *db = rdb_create_database("my_db");
@@ -146,37 +153,40 @@ fi_array_push(values, &val3);
 
 rdb_insert_row(db, "users", values);
 
+// 打印数据库信息
+rdb_print_database_info(db);
+
 // 清理
 fi_array_destroy(columns);
 fi_array_destroy(values);
 rdb_destroy_database(db);
 ```
 
-### 3. 运行演示程序
+### 2. 运行演示程序
 
 ```bash
-# 运行最小版本演示
-./build/minimal_demo
+# 编译并运行演示
+make run
 
-# 运行简化版本演示
-./build/simple_demo
+# 或者直接运行
+./build/rdb_demo
 ```
 
 ## 技术实现
 
 ### 数据结构使用
 - **fi_array**: 存储表列表、行数据、列定义
-- **fi_map**: 存储表元数据（使用整数键避免字符串问题）
-- **fi_btree**: 实现索引结构（在完整版本中）
+- **fi_map**: 存储表元数据映射
+- **fi_btree**: 实现索引结构
 
 ### 架构设计
 ```
 Database
-├── tables (fi_array: rdb_table_t*)
+├── tables (fi_map: table_name -> rdb_table_t*)
 │   └── Table
 │       ├── columns (fi_array: rdb_column_t*)
 │       ├── rows (fi_array: rdb_row_t*)
-│       └── indexes (fi_map: name -> fi_btree)
+│       └── indexes (fi_map: index_name -> fi_btree)
 ```
 
 ## API 参考
@@ -219,6 +229,34 @@ Database
 3. **数据操作** - 插入、查询数据
 4. **索引操作** - 创建和使用索引
 5. **SQL 解析器** - 解析各种 SQL 语句
+
+演示程序展示了数据库系统的完整功能，包括：
+
+#### 1. 基本数据库操作演示
+- 创建数据库实例
+- 打开和关闭数据库
+- 显示数据库状态和信息
+
+#### 2. 表操作演示
+- 创建具有不同数据类型的表
+- 定义主键和唯一约束
+- 显示表结构和元数据
+
+#### 3. 数据操作演示
+- 插入单行和多行数据
+- 查询和显示数据
+- 数据验证和类型检查
+
+#### 4. 索引操作演示
+- 创建主键索引
+- 创建唯一索引
+- 索引查询优化
+
+#### 5. SQL 解析器演示
+- 解析 CREATE TABLE 语句
+- 解析 INSERT 语句
+- 解析 SELECT 语句
+- 错误处理和语法验证
 
 ## 设计亮点
 
@@ -273,17 +311,40 @@ Database
 ### 内存布局
 ```
 Database
-├── tables (fi_map: name -> Table)
+├── tables (fi_map: table_name -> rdb_table_t*)
 │   └── Table
-│       ├── columns (fi_array: Column*)
-│       ├── rows (fi_array: Row*)
-│       └── indexes (fi_map: name -> fi_btree)
+│       ├── columns (fi_array: rdb_column_t*)
+│       ├── rows (fi_array: rdb_row_t*)
+│       └── indexes (fi_map: index_name -> fi_btree)
 ```
 
 ### 错误处理
 - 统一的错误码系统
 - 详细的错误信息
 - 优雅的错误恢复
+
+## 教育价值
+
+这个项目为学习数据库系统提供了宝贵的实践机会：
+
+### 学习目标
+1. **理解数据库架构**: 通过实际实现了解关系型数据库的核心组件
+2. **掌握数据结构应用**: 学习如何使用基础数据结构构建复杂系统
+3. **SQL 解析技术**: 了解编译原理在数据库中的应用
+4. **内存管理**: 学习复杂数据结构的内存分配和释放策略
+5. **系统设计**: 体验模块化设计和接口设计的重要性
+
+### 适合人群
+- 计算机科学专业学生
+- 数据库系统学习者
+- C 语言进阶开发者
+- 对数据库内部实现感兴趣的程序员
+
+### 学习路径建议
+1. **基础阶段**: 先熟悉 FI 数据结构库的基本用法
+2. **理解阶段**: 阅读代码，理解数据库的基本架构
+3. **实践阶段**: 运行演示程序，观察数据库的行为
+4. **扩展阶段**: 尝试添加新功能或优化现有实现
 
 ## 许可证
 
