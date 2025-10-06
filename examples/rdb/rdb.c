@@ -829,9 +829,8 @@ rdb_table_t* rdb_create_table_object(const char *name, fi_array *columns) {
             rdb_column_t *col_copy = malloc(sizeof(rdb_column_t));
             if (col_copy) {
                 *col_copy = *original_col;
-                /* Store the pointer directly in the array data */
-                table->columns->data[i] = col_copy;
-                table->columns->size++;
+                /* Use fi_array_push to properly add the column */
+                fi_array_push(table->columns, &col_copy);
             }
         }
     }

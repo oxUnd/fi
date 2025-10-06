@@ -1,5 +1,6 @@
 #include "rdb.h"
 #include "sql_parser.h"
+#include "persistence.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,6 +8,7 @@
 
 /* Global database instance */
 static rdb_database_t *g_db = NULL;
+static rdb_persistence_manager_t *g_pm = NULL;
 
 /* Function prototypes */
 void print_welcome_message(void);
@@ -21,30 +23,74 @@ int handle_special_commands(const char *input);
 void print_database_status(void);
 void print_table_list(void);
 void print_table_schema(const char *table_name);
+void print_persistence_status(void);
+int initialize_persistence(const char *db_name, const char *data_dir, rdb_persistence_mode_t mode);
+void print_usage(const char *program_name);
 
 /* Main function */
 int main(int argc, char *argv[]) {
     char *db_name = "interactive_db";
+    char *data_dir = "./rdb_data";
+    rdb_persistence_mode_t persistence_mode = RDB_PERSISTENCE_FULL;
+    bool use_persistence = true;
     
     /* Parse command line arguments */
-    if (argc > 1) {
-        db_name = argv[1];
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            print_usage(argv[0]);
+            return 0;
+        } else if (strcmp(argv[i], "--no-persistence") == 0) {
+            use_persistence = false;
+        } else if (strcmp(argv[i], "--data-dir") == 0 && i + 1 < argc) {
+            data_dir = argv[++i];
+        } else if (strcmp(argv[i], "--persistence-mode") == 0 && i + 1 < argc) {
+            if (strcmp(argv[i + 1], "memory") == 0) {
+                persistence_mode = RDB_PERSISTENCE_MEMORY_ONLY;
+            } else if (strcmp(argv[i + 1], "wal") == 0) {
+                persistence_mode = RDB_PERSISTENCE_WAL_ONLY;
+            } else if (strcmp(argv[i + 1], "checkpoint") == 0) {
+                persistence_mode = RDB_PERSISTENCE_CHECKPOINT_ONLY;
+            } else if (strcmp(argv[i + 1], "full") == 0) {
+                persistence_mode = RDB_PERSISTENCE_FULL;
+            } else {
+                print_error_message("Invalid persistence mode. Use: memory, wal, checkpoint, or full");
+                return 1;
+            }
+            i++;
+        } else if (argv[i][0] != '-') {
+            /* Database name (positional argument) */
+            db_name = argv[i];
+        } else {
+            print_error_message("Unknown option");
+            print_usage(argv[0]);
+            return 1;
+        }
     }
     
     /* Initialize input buffer */
     char input_buffer[1024];
     
-    /* Create and open database */
-    g_db = rdb_create_database(db_name);
-    if (!g_db) {
-        print_error_message("Failed to create database");
-        return 1;
+    /* Initialize persistence if enabled */
+    if (use_persistence) {
+        if (initialize_persistence(db_name, data_dir, persistence_mode) != 0) {
+            print_error_message("Failed to initialize persistence. Falling back to memory-only mode.");
+            use_persistence = false;
+        }
     }
     
-    if (rdb_open_database(g_db) != 0) {
-        print_error_message("Failed to open database");
-        rdb_destroy_database(g_db);
-        return 1;
+    /* Create and open database */
+    if (!use_persistence) {
+        g_db = rdb_create_database(db_name);
+        if (!g_db) {
+            print_error_message("Failed to create database");
+            return 1;
+        }
+        
+        if (rdb_open_database(g_db) != 0) {
+            print_error_message("Failed to open database");
+            rdb_destroy_database(g_db);
+            return 1;
+        }
     }
     
     /* Set up cleanup on exit */
@@ -120,6 +166,8 @@ void print_help_message(void) {
     printf("  tables        - List all tables\n");
     printf("  schema <table> - Show table schema\n");
     printf("  status        - Show database status\n");
+    printf("  persistence   - Show persistence status and statistics\n");
+    printf("  checkpoint    - Force a checkpoint (if persistence enabled)\n");
     printf("  quit/exit     - Exit the program\n");
     printf("  clear         - Clear screen\n");
     printf("\nExamples:\n");
@@ -190,6 +238,10 @@ int execute_statement(const rdb_statement_t *stmt) {
             result = rdb_create_table_thread_safe(g_db, stmt->table_name, stmt->columns);
             if (result == 0) {
                 print_success_message("Table created successfully");
+                /* Save to persistence if enabled */
+                if (g_pm) {
+                    rdb_persistence_save_database(g_pm, g_db);
+                }
             } else {
                 print_error_message("Failed to create table");
             }
@@ -199,6 +251,10 @@ int execute_statement(const rdb_statement_t *stmt) {
             result = rdb_drop_table_thread_safe(g_db, stmt->table_name);
             if (result == 0) {
                 print_success_message("Table dropped successfully");
+                /* Save to persistence if enabled */
+                if (g_pm) {
+                    rdb_persistence_save_database(g_pm, g_db);
+                }
             } else {
                 print_error_message("Failed to drop table");
             }
@@ -208,6 +264,10 @@ int execute_statement(const rdb_statement_t *stmt) {
             result = rdb_insert_row_thread_safe(g_db, stmt->table_name, stmt->values);
             if (result == 0) {
                 print_success_message("Row inserted successfully");
+                /* Save to persistence if enabled */
+                if (g_pm) {
+                    rdb_persistence_save_database(g_pm, g_db);
+                }
             } else {
                 print_error_message("Failed to insert row");
             }
@@ -246,6 +306,10 @@ int execute_statement(const rdb_statement_t *stmt) {
                                                 stmt->where_conditions);
             if (result == 0) {
                 print_success_message("Rows updated successfully");
+                /* Save to persistence if enabled */
+                if (g_pm) {
+                    rdb_persistence_save_database(g_pm, g_db);
+                }
             } else {
                 print_error_message("Failed to update rows");
             }
@@ -256,6 +320,10 @@ int execute_statement(const rdb_statement_t *stmt) {
                                                 stmt->where_conditions);
             if (result == 0) {
                 print_success_message("Rows deleted successfully");
+                /* Save to persistence if enabled */
+                if (g_pm) {
+                    rdb_persistence_save_database(g_pm, g_db);
+                }
             } else {
                 print_error_message("Failed to delete rows");
             }
@@ -265,6 +333,10 @@ int execute_statement(const rdb_statement_t *stmt) {
             result = rdb_create_index(g_db, stmt->table_name, stmt->index_name, stmt->index_column);
             if (result == 0) {
                 print_success_message("Index created successfully");
+                /* Save to persistence if enabled */
+                if (g_pm) {
+                    rdb_persistence_save_database(g_pm, g_db);
+                }
             } else {
                 print_error_message("Failed to create index");
             }
@@ -274,6 +346,10 @@ int execute_statement(const rdb_statement_t *stmt) {
             result = rdb_drop_index(g_db, stmt->table_name, stmt->index_name);
             if (result == 0) {
                 print_success_message("Index dropped successfully");
+                /* Save to persistence if enabled */
+                if (g_pm) {
+                    rdb_persistence_save_database(g_pm, g_db);
+                }
             } else {
                 print_error_message("Failed to drop index");
             }
@@ -396,6 +472,21 @@ int handle_special_commands(const char *input) {
     } else if (strcmp(lower_input, "clear") == 0) {
         printf("\033[2J\033[H"); /* Clear screen */
         handled = 1;
+    } else if (strcmp(lower_input, "persistence") == 0) {
+        print_persistence_status();
+        handled = 1;
+    } else if (strcmp(lower_input, "checkpoint") == 0) {
+        if (g_pm) {
+            int result = rdb_persistence_force_checkpoint(g_pm, g_db);
+            if (result == 0) {
+                print_success_message("Checkpoint completed successfully");
+            } else {
+                print_error_message("Failed to perform checkpoint");
+            }
+        } else {
+            print_error_message("Persistence not enabled");
+        }
+        handled = 1;
     }
     
     free(lower_input);
@@ -420,6 +511,18 @@ void print_database_status(void) {
     
     printf("Tables: %zu\n", fi_map_size(g_db->tables));
     printf("Foreign Keys: %zu\n", fi_map_size(g_db->foreign_keys));
+    
+    if (g_pm) {
+        printf("Persistence: Enabled (%s)\n", 
+               g_pm->mode == RDB_PERSISTENCE_MEMORY_ONLY ? "Memory Only" :
+               g_pm->mode == RDB_PERSISTENCE_WAL_ONLY ? "WAL Only" :
+               g_pm->mode == RDB_PERSISTENCE_CHECKPOINT_ONLY ? "Checkpoint Only" :
+               g_pm->mode == RDB_PERSISTENCE_FULL ? "Full" : "Unknown");
+        printf("Data Directory: %s\n", g_pm->data_dir);
+    } else {
+        printf("Persistence: Disabled\n");
+    }
+    
     printf("\n");
 }
 
@@ -499,8 +602,117 @@ void print_table_schema(const char *table_name) {
 
 /* Cleanup and exit */
 void cleanup_and_exit(void) {
-    if (g_db) {
+    if (g_pm && g_db) {
+        /* Save database state before shutdown */
+        rdb_persistence_save_database(g_pm, g_db);
+        rdb_persistence_close_database(g_pm, g_db);
+        rdb_persistence_shutdown(g_pm);
+        rdb_persistence_destroy(g_pm);
+        rdb_destroy_database(g_db);
+    } else if (g_db) {
         rdb_close_database(g_db);
         rdb_destroy_database(g_db);
     }
+}
+
+/* Print persistence status and statistics */
+void print_persistence_status(void) {
+    if (!g_pm) {
+        printf("Persistence: Not enabled\n");
+        return;
+    }
+    
+    printf("\n=== Persistence Status ===\n");
+    printf("Mode: %s\n", 
+           g_pm->mode == RDB_PERSISTENCE_MEMORY_ONLY ? "Memory Only" :
+           g_pm->mode == RDB_PERSISTENCE_WAL_ONLY ? "WAL Only" :
+           g_pm->mode == RDB_PERSISTENCE_CHECKPOINT_ONLY ? "Checkpoint Only" :
+           g_pm->mode == RDB_PERSISTENCE_FULL ? "Full" : "Unknown");
+    printf("Data Directory: %s\n", g_pm->data_dir);
+    printf("Database File: %s\n", g_pm->db_file_path ? g_pm->db_file_path : "Not set");
+    
+    if (g_pm->wal) {
+        printf("WAL: Enabled (Path: %s)\n", g_pm->wal->wal_path);
+        printf("WAL Sequence: %lu\n", g_pm->wal->sequence_number);
+        printf("WAL Entries: %lu\n", g_pm->wal_entries);
+    } else {
+        printf("WAL: Disabled\n");
+    }
+    
+    if (g_pm->page_cache) {
+        printf("Page Cache: Enabled (Max: %zu, Current: %zu)\n", 
+               g_pm->page_cache->max_pages, g_pm->page_cache->current_pages);
+        printf("Cache Hits: %lu, Misses: %lu\n", 
+               g_pm->page_cache->hit_count, g_pm->page_cache->miss_count);
+    } else {
+        printf("Page Cache: Disabled\n");
+    }
+    
+    printf("Statistics:\n");
+    printf("  Total Writes: %lu\n", g_pm->total_writes);
+    printf("  Total Reads: %lu\n", g_pm->total_reads);
+    printf("  Checkpoints: %lu\n", g_pm->checkpoint_count);
+    printf("  Last Checkpoint: %s", ctime(&g_pm->last_checkpoint));
+    printf("  Checkpoint Interval: %lu seconds\n", g_pm->checkpoint_interval);
+    
+    printf("========================\n\n");
+}
+
+/* Initialize persistence system */
+int initialize_persistence(const char *db_name, const char *data_dir, rdb_persistence_mode_t mode) {
+    /* Create persistence manager */
+    g_pm = rdb_persistence_create(data_dir, mode);
+    if (!g_pm) {
+        return -1;
+    }
+    
+    /* Initialize persistence manager */
+    if (rdb_persistence_init(g_pm) != 0) {
+        rdb_persistence_destroy(g_pm);
+        g_pm = NULL;
+        return -1;
+    }
+    
+    /* Create database */
+    g_db = rdb_create_database(db_name);
+    if (!g_db) {
+        rdb_persistence_shutdown(g_pm);
+        rdb_persistence_destroy(g_pm);
+        g_pm = NULL;
+        return -1;
+    }
+    
+    /* Open database with persistence */
+    if (rdb_persistence_open_database(g_pm, g_db) != 0) {
+        rdb_destroy_database(g_db);
+        rdb_persistence_shutdown(g_pm);
+        rdb_persistence_destroy(g_pm);
+        g_pm = NULL;
+        g_db = NULL;
+        return -1;
+    }
+    
+    return 0;
+}
+
+/* Print usage information */
+void print_usage(const char *program_name) {
+    printf("Usage: %s [OPTIONS] [DATABASE_NAME]\n", program_name);
+    printf("\nOptions:\n");
+    printf("  -h, --help                    Show this help message\n");
+    printf("  --no-persistence              Disable persistence (memory-only mode)\n");
+    printf("  --data-dir DIR                Set data directory for persistence (default: ./rdb_data)\n");
+    printf("  --persistence-mode MODE       Set persistence mode (default: full)\n");
+    printf("                                Modes: memory, wal, checkpoint, full\n");
+    printf("\nExamples:\n");
+    printf("  %s                                    # Use default settings\n", program_name);
+    printf("  %s my_database                         # Use specific database name\n", program_name);
+    printf("  %s --no-persistence                   # Disable persistence\n", program_name);
+    printf("  %s --data-dir /tmp/rdb my_db          # Use custom data directory\n", program_name);
+    printf("  %s --persistence-mode wal my_db       # Use WAL-only persistence\n", program_name);
+    printf("\nPersistence Modes:\n");
+    printf("  memory      - No persistence, data lost on exit\n");
+    printf("  wal         - Write-ahead log only\n");
+    printf("  checkpoint  - Periodic checkpoints only\n");
+    printf("  full        - WAL + checkpoints (recommended)\n");
 }
