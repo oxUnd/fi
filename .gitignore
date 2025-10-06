@@ -41,7 +41,9 @@ build/
 src/fi
 
 # Test files and executables
-tests/test_*
+tests/test_fi_map
+tests/test_fi_array
+tests/test_fi_btree
 tests/*.o
 tests/*.log
 tests/*.trs

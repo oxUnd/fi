@@ -128,7 +128,7 @@ static fi_map_entry* fi_map_find_entry(const fi_map *map, const void *key, uint3
         }
         
         /* Robin Hood: if current entry's distance is less than ours, keep going */
-        if (entry->key != NULL && entry->distance < distance) {
+        if (entry->key != NULL && !entry->is_deleted && entry->distance < distance) {
             return NULL; /* Key should be here but isn't */
         }
         
@@ -404,7 +404,7 @@ uint32_t fi_map_hash_int64(const void *key, size_t key_size) {
 
 uint32_t fi_map_hash_ptr(const void *key, size_t key_size) {
     (void)key_size; /* Suppress unused parameter warning */
-    return fi_map_xxhash32(&key, sizeof(void*), 0);
+    return fi_map_xxhash32(key, sizeof(void*), 0);
 }
 
 uint32_t fi_map_hash_bytes(const void *key, size_t key_size) {
@@ -429,8 +429,10 @@ int fi_map_compare_int64(const void *key1, const void *key2) {
 }
 
 int fi_map_compare_ptr(const void *key1, const void *key2) {
-    if (key1 < key2) return -1;
-    if (key1 > key2) return 1;
+    void *ptr1 = *(void**)key1;
+    void *ptr2 = *(void**)key2;
+    if (ptr1 < ptr2) return -1;
+    if (ptr1 > ptr2) return 1;
     return 0;
 }
 
