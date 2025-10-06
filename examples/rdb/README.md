@@ -9,6 +9,7 @@
 1. **数据库引擎** (`rdb.h`, `rdb.c`) - 完整的关系型数据库实现
 2. **SQL 解析器** (`sql_parser.h`, `sql_parser.c`) - 支持基本 SQL 语句解析
 3. **演示程序** (`rdb_demo.c`) - 展示数据库功能的完整演示
+4. **交互式 SQL 客户端** (`interactive_sql.c`) - 提供命令行界面进行 SQL 操作
 
 该实现稳定可靠，适合学习和理解数据库系统的基本原理。
 
@@ -37,6 +38,9 @@
 - `DELETE` - 删除数据，支持 WHERE 条件
 - `CREATE INDEX` - 创建索引
 - `DROP INDEX` - 删除索引
+- `BEGIN TRANSACTION` - 开始事务
+- `COMMIT` - 提交事务
+- `ROLLBACK` - 回滚事务
 
 ### SQL 解析器特性
 - **词法分析**: 完整的 SQL 词法分析器，支持关键字、标识符、字符串、数字、操作符
@@ -95,6 +99,9 @@ make
 
 # 运行演示程序
 make run
+
+# 运行交互式 SQL 客户端
+make run-interactive
 
 # 使用 valgrind 检查内存泄漏
 make valgrind
@@ -222,6 +229,8 @@ Database
 
 ## 演示程序
 
+### 1. 基本演示程序 (rdb_demo)
+
 运行 `rdb_demo` 可以看到以下演示：
 
 1. **基本数据库操作** - 创建、打开、关闭数据库
@@ -229,6 +238,75 @@ Database
 3. **数据操作** - 插入、查询数据
 4. **索引操作** - 创建和使用索引
 5. **SQL 解析器** - 解析各种 SQL 语句
+
+### 2. 交互式 SQL 客户端 (interactive_sql)
+
+交互式 SQL 客户端提供了一个命令行界面，允许用户直接输入和执行 SQL 语句。
+
+#### 启动客户端
+```bash
+# 使用默认数据库名
+make run-interactive
+
+# 或直接运行
+./build/interactive_sql
+
+# 指定数据库名
+./build/interactive_sql my_database
+```
+
+#### 支持的命令
+
+**特殊命令：**
+- `help` - 显示帮助信息
+- `tables` - 列出所有表
+- `schema <table_name>` - 显示表结构
+- `status` - 显示数据库状态
+- `quit` 或 `exit` - 退出程序
+- `clear` - 清屏
+
+**SQL 语句：**
+- `CREATE TABLE` - 创建表
+- `INSERT INTO` - 插入数据
+- `SELECT` - 查询数据
+- `UPDATE` - 更新数据
+- `DELETE` - 删除数据
+- `CREATE INDEX` - 创建索引
+- `DROP INDEX` - 删除索引
+- `BEGIN TRANSACTION` - 开始事务
+- `COMMIT` - 提交事务
+- `ROLLBACK` - 回滚事务
+
+#### 使用示例
+```sql
+-- 创建表
+CREATE TABLE students (
+    id INT PRIMARY KEY,
+    name VARCHAR(50),
+    age INT,
+    gpa FLOAT
+)
+
+-- 插入数据
+INSERT INTO students VALUES (1, 'Alice', 20, 3.8)
+INSERT INTO students VALUES (2, 'Bob', 22, 3.5)
+
+-- 查询数据
+SELECT * FROM students
+SELECT name, gpa FROM students WHERE age > 20
+
+-- 更新数据
+UPDATE students SET age = 21 WHERE name = 'Alice'
+
+-- 删除数据
+DELETE FROM students WHERE gpa < 3.0
+
+-- 查看表结构
+schema students
+
+-- 查看所有表
+tables
+```
 
 演示程序展示了数据库系统的完整功能，包括：
 

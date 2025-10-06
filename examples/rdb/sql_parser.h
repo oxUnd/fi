@@ -86,7 +86,12 @@ typedef enum {
     SQL_KW_UNCOMMITTED,
     SQL_KW_COMMITTED,
     SQL_KW_REPEATABLE,
-    SQL_KW_SERIALIZABLE
+    SQL_KW_SERIALIZABLE,
+    SQL_KW_TRUE,
+    SQL_KW_FALSE,
+    SQL_KW_LIKE,
+    SQL_KW_IS,
+    SQL_KW_IN
 } sql_keyword_t;
 
 /* SQL operators */
@@ -123,13 +128,13 @@ const char* sql_parser_get_error(sql_parser_t *parser);
 /* Statement parsing */
 rdb_statement_t* sql_parse_statement(sql_parser_t *parser);
 rdb_statement_t* sql_parse_create_table(sql_parser_t *parser, rdb_statement_t *stmt);
-rdb_statement_t* sql_parse_drop_table(sql_parser_t *parser);
+rdb_statement_t* sql_parse_drop_table(sql_parser_t *parser, rdb_statement_t *stmt);
 rdb_statement_t* sql_parse_insert(sql_parser_t *parser);
 rdb_statement_t* sql_parse_select(sql_parser_t *parser);
 rdb_statement_t* sql_parse_update(sql_parser_t *parser);
 rdb_statement_t* sql_parse_delete(sql_parser_t *parser);
 rdb_statement_t* sql_parse_create_index(sql_parser_t *parser);
-rdb_statement_t* sql_parse_drop_index(sql_parser_t *parser);
+rdb_statement_t* sql_parse_drop_index(sql_parser_t *parser, rdb_statement_t *stmt);
 rdb_statement_t* sql_parse_begin_transaction(sql_parser_t *parser);
 rdb_statement_t* sql_parse_commit_transaction(sql_parser_t *parser);
 rdb_statement_t* sql_parse_rollback_transaction(sql_parser_t *parser);
@@ -148,6 +153,7 @@ int sql_parse_column_definition(sql_parser_t *parser, rdb_column_t *column);
 int sql_parse_column_list(sql_parser_t *parser, fi_array *columns);
 int sql_parse_value_list(sql_parser_t *parser, fi_array *values);
 int sql_parse_where_clause(sql_parser_t *parser, fi_array *conditions);
+int sql_parse_set_clause(sql_parser_t *parser, fi_array *columns, fi_array *values);
 
 /* JOIN parsing */
 int sql_parse_join_clause(sql_parser_t *parser, fi_array *join_conditions);
