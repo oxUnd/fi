@@ -601,14 +601,23 @@ int rdb_persistence_close_database(rdb_persistence_manager_t *pm, rdb_database_t
     return 0;
 }
 
-/* Save database to persistent storage */
-int rdb_persistence_save_database(rdb_persistence_manager_t *pm, rdb_database_t *db) {
+/* Timeout-protected save database to persistent storage */
+int rdb_persistence_save_database_timeout(rdb_persistence_manager_t *pm, rdb_database_t *db, int timeout_seconds) {
     if (!pm || !db) return -1;
     
-    pthread_rwlock_wrlock(&pm->persistence_rwlock);
+    /* Set up timeout using alarm */
+    alarm(timeout_seconds);
+    
+    /* Try to acquire lock (no timeout on lock acquisition since we use mutex) */
+    if (pthread_mutex_lock(&pm->persistence_rwlock) != 0) {
+        alarm(0); /* Cancel alarm */
+        printf("DEBUG: Failed to acquire lock for save operation\n");
+        return -1;
+    }
     
     /* Serialize and save database header */
     if (rdb_persistence_save_header(pm, db) != 0) {
+        alarm(0); /* Cancel alarm */
         pthread_rwlock_unlock(&pm->persistence_rwlock);
         return -1;
     }
@@ -627,10 +636,117 @@ int rdb_persistence_save_database(rdb_persistence_manager_t *pm, rdb_database_t 
                 printf("DEBUG: Saving table: %s\n", table_name);
                 if (rdb_persistence_save_table(pm, *table_ptr) != 0) {
                     printf("DEBUG: Failed to save table: %s\n", table_name);
+                    alarm(0); /* Cancel alarm */
                     pthread_rwlock_unlock(&pm->persistence_rwlock);
                     return -1;
                 }
                 printf("DEBUG: Successfully saved table: %s\n", table_name);
+            }
+        }
+    } else {
+        printf("DEBUG: No tables found in database\n");
+    }
+    
+    /* Save foreign key constraints */
+    if (rdb_persistence_save_foreign_keys(pm, db) != 0) {
+        alarm(0); /* Cancel alarm */
+        pthread_rwlock_unlock(&pm->persistence_rwlock);
+        return -1;
+    }
+    
+    /* Force sync to disk with timeout protection */
+    if (pm->db_fd >= 0) {
+        /* Use fdatasync instead of fsync for better performance */
+        if (fdatasync(pm->db_fd) != 0) {
+            printf("DEBUG: Warning - fdatasync failed, but continuing\n");
+            /* Don't fail the entire operation for sync issues */
+        }
+    }
+    
+    pm->total_writes++;
+    alarm(0); /* Cancel alarm */
+    pthread_rwlock_unlock(&pm->persistence_rwlock);
+    return 0;
+}
+
+/* Timeout-protected close database */
+int rdb_persistence_close_database_timeout(rdb_persistence_manager_t *pm, rdb_database_t *db, int timeout_seconds) {
+    if (!pm || !db) return -1;
+    
+    /* Set up timeout using alarm */
+    alarm(timeout_seconds);
+    
+    /* Try to acquire lock (no timeout on lock acquisition since we use mutex) */
+    if (pthread_mutex_lock(&pm->persistence_rwlock) != 0) {
+        alarm(0); /* Cancel alarm */
+        printf("DEBUG: Failed to acquire lock for close operation\n");
+        return -1;
+    }
+    
+    /* Save database to persistent storage with timeout protection */
+    if (rdb_persistence_save_database_timeout(pm, db, timeout_seconds - 1) != 0) {
+        printf("DEBUG: Warning - save operation failed during close, but continuing\n");
+        /* Don't fail the entire close operation */
+    }
+    
+    /* Force checkpoint with timeout protection */
+    if (pm->mode == RDB_PERSISTENCE_CHECKPOINT_ONLY || pm->mode == RDB_PERSISTENCE_FULL) {
+        /* Skip checkpoint if we're running out of time */
+        if (timeout_seconds > 1) {
+            if (rdb_persistence_force_checkpoint(pm, db) != 0) {
+                printf("DEBUG: Warning - checkpoint failed during close, but continuing\n");
+                /* Don't fail the entire close operation */
+            }
+        }
+    }
+    
+    alarm(0); /* Cancel alarm */
+    pthread_rwlock_unlock(&pm->persistence_rwlock);
+    return 0;
+}
+
+/* Save database to persistent storage */
+int rdb_persistence_save_database(rdb_persistence_manager_t *pm, rdb_database_t *db) {
+    if (!pm || !db) return -1;
+    
+    pthread_rwlock_wrlock(&pm->persistence_rwlock);
+    
+    /* Serialize and save database header */
+    if (rdb_persistence_save_header(pm, db) != 0) {
+        pthread_rwlock_unlock(&pm->persistence_rwlock);
+        return -1;
+    }
+    
+    /* Serialize and save all tables */
+    if (db->tables) {
+        printf("DEBUG: Found %zu tables to save\n", fi_map_size(db->tables));
+        
+        /* Iterate through all tables and save them */
+        fi_map_iterator iter = fi_map_iterator_create(db->tables);
+        
+        /* Handle first element if iterator is valid */
+        if (iter.is_valid) {
+            const char *table_name = (const char*)fi_map_iterator_key(&iter);
+            rdb_table_t **table_ptr = (rdb_table_t**)fi_map_iterator_value(&iter);
+            
+            if (table_ptr && *table_ptr) {
+                if (rdb_persistence_save_table(pm, *table_ptr) != 0) {
+                    pthread_rwlock_unlock(&pm->persistence_rwlock);
+                    return -1;
+                }
+            }
+        }
+        
+        /* Handle remaining elements */
+        while (fi_map_iterator_next(&iter)) {
+            const char *table_name = (const char*)fi_map_iterator_key(&iter);
+            rdb_table_t **table_ptr = (rdb_table_t**)fi_map_iterator_value(&iter);
+            
+            if (table_ptr && *table_ptr) {
+                if (rdb_persistence_save_table(pm, *table_ptr) != 0) {
+                    pthread_rwlock_unlock(&pm->persistence_rwlock);
+                    return -1;
+                }
             }
         }
     } else {

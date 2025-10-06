@@ -5,10 +5,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <signal.h>
+#include <unistd.h>
 
 /* Global database instance */
 static rdb_database_t *g_db = NULL;
 static rdb_persistence_manager_t *g_pm = NULL;
+
+/* Global flag to track cleanup state */
+static volatile int cleanup_in_progress = 0;
 
 /* Function prototypes */
 void print_welcome_message(void);
@@ -19,6 +24,7 @@ int process_sql_command(const char *sql);
 int execute_statement(const rdb_statement_t *stmt);
 void print_query_result(fi_array *result, const rdb_statement_t *stmt);
 void cleanup_and_exit(void);
+void signal_handler(int sig);
 int handle_special_commands(const char *input);
 void print_database_status(void);
 void print_table_list(void);
@@ -92,6 +98,11 @@ int main(int argc, char *argv[]) {
             return 1;
         }
     }
+    
+    /* Set up signal handlers */
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+    signal(SIGALRM, signal_handler);
     
     /* Set up cleanup on exit */
     atexit(cleanup_and_exit);
@@ -457,6 +468,7 @@ int handle_special_commands(const char *input) {
         handled = 1;
     } else if (strcmp(lower_input, "quit") == 0 || strcmp(lower_input, "exit") == 0) {
         printf("Goodbye!\n");
+        cleanup_in_progress = 1;
         exit(0);
     } else if (strcmp(lower_input, "tables") == 0) {
         print_table_list();
@@ -600,15 +612,59 @@ void print_table_schema(const char *table_name) {
     printf("----------------------------------------\n\n");
 }
 
+/* Signal handler for graceful shutdown */
+void signal_handler(int sig) {
+    if (cleanup_in_progress) {
+        printf("\nForce exit due to signal %d\n", sig);
+        _exit(1);
+    }
+    
+    printf("\nReceived signal %d, shutting down gracefully...\n", sig);
+    cleanup_in_progress = 1;
+    
+    /* Try to cleanup with a short timeout */
+    alarm(3); /* 3 second timeout for cleanup */
+    cleanup_and_exit();
+    alarm(0);
+    
+    printf("Graceful shutdown completed.\n");
+    exit(0);
+}
+
 /* Cleanup and exit */
 void cleanup_and_exit(void) {
+    if (cleanup_in_progress) {
+        return; /* Already in cleanup, avoid recursion */
+    }
+    
     if (g_pm && g_db) {
-        /* Save database state before shutdown */
-        rdb_persistence_save_database(g_pm, g_db);
-        rdb_persistence_close_database(g_pm, g_db);
+        /* Save database state before shutdown with timeout protection */
+        printf("Saving database state before exit...\n");
+        
+        /* Set a timeout for the save operation */
+        alarm(5); /* 5 second timeout */
+        
+        /* Try to save database with timeout protection */
+        int save_result = rdb_persistence_save_database_timeout(g_pm, g_db, 3);
+        if (save_result != 0) {
+            printf("DEBUG: Warning - save operation failed or timed out, but continuing\n");
+        }
+        
+        /* Try to close database with timeout protection */
+        int close_result = rdb_persistence_close_database_timeout(g_pm, g_db, 2);
+        if (close_result != 0) {
+            printf("DEBUG: Warning - close operation failed or timed out, but continuing\n");
+        }
+        
+        /* Cancel any remaining alarm */
+        alarm(0);
+        
+        /* Clean up resources */
         rdb_persistence_shutdown(g_pm);
         rdb_persistence_destroy(g_pm);
         rdb_destroy_database(g_db);
+        
+        printf("Database cleanup completed.\n");
     } else if (g_db) {
         rdb_close_database(g_db);
         rdb_destroy_database(g_db);

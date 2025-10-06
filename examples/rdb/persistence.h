@@ -185,6 +185,10 @@ int rdb_persistence_close_database(rdb_persistence_manager_t *pm, rdb_database_t
 int rdb_persistence_save_database(rdb_persistence_manager_t *pm, rdb_database_t *db);
 int rdb_persistence_load_database(rdb_persistence_manager_t *pm, rdb_database_t *db);
 
+/* Timeout-protected database operations */
+int rdb_persistence_save_database_timeout(rdb_persistence_manager_t *pm, rdb_database_t *db, int timeout_seconds);
+int rdb_persistence_close_database_timeout(rdb_persistence_manager_t *pm, rdb_database_t *db, int timeout_seconds);
+
 /* Table operations with persistence */
 int rdb_persistence_create_table(rdb_persistence_manager_t *pm, rdb_database_t *db, 
                                  const char *table_name, fi_array *columns);
