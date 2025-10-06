@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <stdarg.h>
 #include <unistd.h>  /* for ssize_t */
+#include <stdint.h>  /* for uint32_t */
 
 /* Array data structure */
 typedef struct fi_array {

@@ -6,15 +6,28 @@ autom4te.cache/
 compile
 config.h
 config.h.in
+config.h.in~
 config.log
 config.status
+config.sub
+config.guess
 configure
+configure~
 depcomp
 install-sh
 missing
 stamp-h1
+test-driver
 .deps/
 .dirstamp
+libtool
+ltmain.sh
+m4/libtool.m4
+m4/ltoptions.m4
+m4/ltsugar.m4
+m4/ltversion.m4
+m4/lt~obsolete.m4
+ar-lib
 
 # Build artifacts
 build/
@@ -22,8 +35,19 @@ build/
 *.a
 *.so
 *.dylib
+*.la
+*.lo
+.libs/
 src/fi
 
+# Test files and executables
+tests/test_*
+tests/*.o
+tests/*.log
+tests/*.trs
+tests/*.test
+tests/*.exe
+*_test
 # Debug
 *.dSYM/
 core
