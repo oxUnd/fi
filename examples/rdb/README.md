@@ -56,37 +56,37 @@
 
 ```mermaid
 graph TB
-    subgraph "应用层"
-        A[rdb_demo.c<br/>演示程序] 
-        B[interactive_sql.c<br/>交互式SQL客户端]
-        C[其他应用程序]
+    subgraph "Application Layer"
+        A["rdb_demo.c<br/>Demo Program"] 
+        B["interactive_sql.c<br/>Interactive SQL Client"]
+        C["Other Applications"]
     end
     
-    subgraph "SQL解析层"
-        D[sql_parser.h/c<br/>SQL解析器]
-        E[词法分析器<br/>Tokenization]
-        F[语法分析器<br/>Parsing]
-        G[语句执行器<br/>Execution]
+    subgraph "SQL Parser Layer"
+        D["sql_parser.h/c<br/>SQL Parser"]
+        E["Lexical Analyzer<br/>Tokenization"]
+        F["Syntax Analyzer<br/>Parsing"]
+        G["Statement Executor<br/>Execution"]
     end
     
-    subgraph "数据库引擎层"
-        H[rdb.h/c<br/>数据库核心]
-        I[事务管理器<br/>Transaction Manager]
-        J[锁管理器<br/>Lock Manager]
-        K[外键约束<br/>Foreign Key Constraints]
+    subgraph "Database Engine Layer"
+        H["rdb.h/c<br/>Database Core"]
+        I["Transaction Manager<br/>Transaction Manager"]
+        J["Lock Manager<br/>Lock Manager"]
+        K["Foreign Key Constraints<br/>Foreign Key Constraints"]
     end
     
-    subgraph "存储层"
-        L[表元数据<br/>fi_map]
-        M[行数据<br/>fi_array]
-        N[索引<br/>fi_btree]
-        O[外键映射<br/>fi_map]
+    subgraph "Storage Layer"
+        L["Table Metadata<br/>fi_map"]
+        M["Row Data<br/>fi_array"]
+        N["Indexes<br/>fi_btree"]
+        O["Foreign Key Map<br/>fi_map"]
     end
     
-    subgraph "FI数据结构库"
-        P[fi_array<br/>动态数组]
-        Q[fi_map<br/>哈希映射]
-        R[fi_btree<br/>B树索引]
+    subgraph "FI Data Structure Library"
+        P["fi_array<br/>Dynamic Array"]
+        Q["fi_map<br/>Hash Map"]
+        R["fi_btree<br/>B-Tree Index"]
     end
     
     A --> D
@@ -127,50 +127,50 @@ graph TB
 
 ```mermaid
 graph TD
-    subgraph "应用程序入口"
-        A[main函数]
-        B[rdb_demo演示]
-        C[interactive_sql交互式客户端]
+    subgraph "Application Entry"
+        A["main function"]
+        B["rdb_demo demo"]
+        C["interactive_sql client"]
     end
     
-    subgraph "SQL解析器"
-        D[sql_parser_create]
-        E[sql_parse_statement]
-        F[sql_parse_create_table]
-        G[sql_parse_insert]
-        H[sql_parse_select]
-        I[sql_parse_update]
-        J[sql_parse_delete]
-        K[sql_execute_statement]
+    subgraph "SQL Parser"
+        D["sql_parser_create"]
+        E["sql_parse_statement"]
+        F["sql_parse_create_table"]
+        G["sql_parse_insert"]
+        H["sql_parse_select"]
+        I["sql_parse_update"]
+        J["sql_parse_delete"]
+        K["sql_execute_statement"]
     end
     
-    subgraph "数据库核心操作"
-        L[rdb_create_database]
-        M[rdb_create_table]
-        N[rdb_insert_row]
-        O[rdb_select_rows]
-        P[rdb_update_rows]
-        Q[rdb_delete_rows]
-        R[rdb_drop_table]
+    subgraph "Database Core Operations"
+        L["rdb_create_database"]
+        M["rdb_create_table"]
+        N["rdb_insert_row"]
+        O["rdb_select_rows"]
+        P["rdb_update_rows"]
+        Q["rdb_delete_rows"]
+        R["rdb_drop_table"]
     end
     
-    subgraph "事务管理"
-        S[rdb_begin_transaction]
-        T[rdb_commit_transaction]
-        U[rdb_rollback_transaction]
-        V[rdb_log_operation]
+    subgraph "Transaction Management"
+        S["rdb_begin_transaction"]
+        T["rdb_commit_transaction"]
+        U["rdb_rollback_transaction"]
+        V["rdb_log_operation"]
     end
     
-    subgraph "索引操作"
-        W[rdb_create_index]
-        X[rdb_drop_index]
-        Y[rdb_get_index]
+    subgraph "Index Operations"
+        W["rdb_create_index"]
+        X["rdb_drop_index"]
+        Y["rdb_get_index"]
     end
     
-    subgraph "外键约束"
-        Z[rdb_add_foreign_key]
-        AA[rdb_validate_foreign_key]
-        BB[rdb_enforce_foreign_key_constraints]
+    subgraph "Foreign Key Constraints"
+        Z["rdb_add_foreign_key"]
+        AA["rdb_validate_foreign_key"]
+        BB["rdb_enforce_foreign_key_constraints"]
     end
     
     A --> B
@@ -257,36 +257,36 @@ flowchart TD
     P --> R
     Q --> R
     
-    R --> S{执行操作类型}
+    R --> S{"Operation Type"}
     
-    S -->|CREATE TABLE| T[rdb_create_table]
-    S -->|INSERT| U[rdb_insert_row]
-    S -->|SELECT| V[rdb_select_rows]
-    S -->|UPDATE| W[rdb_update_rows]
-    S -->|DELETE| X[rdb_delete_rows]
-    S -->|DROP| Y[rdb_drop_table]
+    S -->|"CREATE TABLE"| T["rdb_create_table"]
+    S -->|"INSERT"| U["rdb_insert_row"]
+    S -->|"SELECT"| V["rdb_select_rows"]
+    S -->|"UPDATE"| W["rdb_update_rows"]
+    S -->|"DELETE"| X["rdb_delete_rows"]
+    S -->|"DROP"| Y["rdb_drop_table"]
     
-    T --> Z[事务管理]
+    T --> Z["Transaction Management"]
     U --> Z
     W --> Z
     X --> Z
     Y --> Z
     
-    Z --> AA{是否在事务中}
-    AA -->|是| BB[记录操作日志]
-    AA -->|否| CC[直接执行]
+    Z --> AA{"In Transaction?"}
+    AA -->|"Yes"| BB["Log Operation"]
+    AA -->|"No"| CC["Direct Execution"]
     
-    BB --> DD[更新索引]
+    BB --> DD["Update Indexes"]
     CC --> DD
     
-    DD --> EE[外键约束检查]
-    EE --> FF[返回执行结果]
+    DD --> EE["Foreign Key Check"]
+    EE --> FF["Return Result"]
     
-    V --> GG[查询优化]
-    GG --> HH[使用索引加速]
-    HH --> II[返回查询结果]
+    V --> GG["Query Optimization"]
+    GG --> HH["Use Index"]
+    HH --> II["Return Query Result"]
     
-    FF --> JJ[输出结果给用户]
+    FF --> JJ["Output to User"]
     II --> JJ
 ```
 
@@ -397,59 +397,59 @@ erDiagram
 
 ```mermaid
 graph TB
-    subgraph "数据库实例 (rdb_database_t)"
-        A[数据库名称<br/>char name[128]]
-        B[表映射<br/>fi_map *tables]
-        C[外键映射<br/>fi_map *foreign_keys]
-        D[事务管理器<br/>rdb_transaction_manager_t*]
-        E[读写锁<br/>pthread_mutex_t rwlock]
+    subgraph "Database Instance"
+        A["Database Name<br/>char name[128]"]
+        B["Table Map<br/>fi_map *tables"]
+        C["Foreign Key Map<br/>fi_map *foreign_keys"]
+        D["Transaction Manager<br/>rdb_transaction_manager_t*"]
+        E["Read-Write Lock<br/>pthread_mutex_t rwlock"]
     end
     
-    subgraph "表映射 (fi_map)"
-        F[表名1 → rdb_table_t*]
-        G[表名2 → rdb_table_t*]
-        H[表名N → rdb_table_t*]
+    subgraph "Table Map (fi_map)"
+        F["Table1 -> rdb_table_t*"]
+        G["Table2 -> rdb_table_t*"]
+        H["TableN -> rdb_table_t*"]
     end
     
-    subgraph "表结构 (rdb_table_t)"
-        I[表名<br/>char name[64]]
-        J[列定义数组<br/>fi_array *columns]
-        K[行数据数组<br/>fi_array *rows]
-        L[索引映射<br/>fi_map *indexes]
-        M[主键列名<br/>char primary_key[64]]
-        N[行ID计数器<br/>size_t next_row_id]
+    subgraph "Table Structure (rdb_table_t)"
+        I["Table Name<br/>char name[64]"]
+        J["Column Array<br/>fi_array *columns"]
+        K["Row Array<br/>fi_array *rows"]
+        L["Index Map<br/>fi_map *indexes"]
+        M["Primary Key<br/>char primary_key[64]"]
+        N["Row ID Counter<br/>size_t next_row_id"]
     end
     
-    subgraph "列定义数组 (fi_array)"
-        O[rdb_column_t*]
-        P[rdb_column_t*]
-        Q[rdb_column_t*]
+    subgraph "Column Array (fi_array)"
+        O["rdb_column_t*"]
+        P["rdb_column_t*"]
+        Q["rdb_column_t*"]
     end
     
-    subgraph "行数据数组 (fi_array)"
-        R[rdb_row_t*]
-        S[rdb_row_t*]
-        T[rdb_row_t*]
+    subgraph "Row Array (fi_array)"
+        R["rdb_row_t*"]
+        S["rdb_row_t*"]
+        T["rdb_row_t*"]
     end
     
-    subgraph "行结构 (rdb_row_t)"
-        U[行ID<br/>size_t row_id]
-        V[值数组<br/>fi_array *values]
+    subgraph "Row Structure (rdb_row_t)"
+        U["Row ID<br/>size_t row_id"]
+        V["Value Array<br/>fi_array *values"]
     end
     
-    subgraph "值数组 (fi_array)"
-        W[rdb_value_t*]
-        X[rdb_value_t*]
-        Y[rdb_value_t*]
+    subgraph "Value Array (fi_array)"
+        W["rdb_value_t*"]
+        X["rdb_value_t*"]
+        Y["rdb_value_t*"]
     end
     
-    subgraph "索引映射 (fi_map)"
-        Z[索引名1 → fi_btree*]
-        AA[索引名2 → fi_btree*]
+    subgraph "Index Map (fi_map)"
+        Z["Index1 -> fi_btree*"]
+        AA["Index2 -> fi_btree*"]
     end
     
-    subgraph "B树索引 (fi_btree)"
-        BB[键值对存储<br/>支持范围查询]
+    subgraph "B-Tree Index (fi_btree)"
+        BB["Key-Value Storage<br/>Range Query Support"]
     end
     
     A --> B
