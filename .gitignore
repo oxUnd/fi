@@ -55,3 +55,10 @@ tests/*.exe
 core
 vgcore.*
 debug_*
+
+# Examples
+array_basic
+btree_basic
+map_basic
+map_simple
+student_management
