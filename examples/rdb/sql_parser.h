@@ -64,7 +64,17 @@ typedef enum {
     SQL_KW_ORDER,
     SQL_KW_BY,
     SQL_KW_LIMIT,
-    SQL_KW_OFFSET
+    SQL_KW_OFFSET,
+    SQL_KW_JOIN,
+    SQL_KW_INNER,
+    SQL_KW_LEFT,
+    SQL_KW_RIGHT,
+    SQL_KW_FULL,
+    SQL_KW_ON,
+    SQL_KW_FOREIGN,
+    SQL_KW_REFERENCES,
+    SQL_KW_CASCADE,
+    SQL_KW_CONSTRAINT
 } sql_keyword_t;
 
 /* SQL operators */
@@ -123,6 +133,16 @@ int sql_parse_column_definition(sql_parser_t *parser, rdb_column_t *column);
 int sql_parse_column_list(sql_parser_t *parser, fi_array *columns);
 int sql_parse_value_list(sql_parser_t *parser, fi_array *values);
 int sql_parse_where_clause(sql_parser_t *parser, fi_array *conditions);
+
+/* JOIN parsing */
+int sql_parse_join_clause(sql_parser_t *parser, fi_array *join_conditions);
+int sql_parse_join_type(sql_parser_t *parser, rdb_join_type_t *join_type);
+int sql_parse_join_condition(sql_parser_t *parser, rdb_join_condition_t *condition);
+int sql_parse_from_clause(sql_parser_t *parser, fi_array *from_tables);
+
+/* Foreign key parsing */
+int sql_parse_foreign_key_definition(sql_parser_t *parser, rdb_foreign_key_t *foreign_key);
+int sql_parse_constraint_definition(sql_parser_t *parser, rdb_foreign_key_t *foreign_key);
 
 /* Value parsing */
 rdb_value_t* sql_parse_value(sql_parser_t *parser);

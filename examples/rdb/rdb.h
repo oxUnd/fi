@@ -30,6 +30,10 @@ typedef struct {
     bool primary_key;           /* Whether this is a primary key */
     bool unique;                /* Whether this column is unique */
     char default_value[256];    /* Default value */
+    /* Foreign key constraints */
+    char foreign_table[64];     /* Referenced table name */
+    char foreign_column[64];    /* Referenced column name */
+    bool is_foreign_key;        /* Whether this is a foreign key */
 } rdb_column_t;
 
 /* Table definition */
@@ -60,10 +64,22 @@ typedef struct {
     bool is_null;               /* Whether this value is NULL */
 } rdb_value_t;
 
+/* Foreign key constraint */
+typedef struct {
+    char constraint_name[64];    /* Constraint name */
+    char table_name[64];        /* Table containing the foreign key */
+    char column_name[64];       /* Column name */
+    char ref_table_name[64];    /* Referenced table name */
+    char ref_column_name[64];   /* Referenced column name */
+    bool on_delete_cascade;     /* CASCADE on delete */
+    bool on_update_cascade;     /* CASCADE on update */
+} rdb_foreign_key_t;
+
 /* Database instance */
 typedef struct {
     char name[128];             /* Database name */
     fi_map *tables;             /* Map of table_name -> rdb_table_t */
+    fi_map *foreign_keys;       /* Map of constraint_name -> rdb_foreign_key_t */
     bool is_open;               /* Whether database is open */
 } rdb_database_t;
 
@@ -76,8 +92,34 @@ typedef enum {
     RDB_STMT_UPDATE,
     RDB_STMT_DELETE,
     RDB_STMT_CREATE_INDEX,
-    RDB_STMT_DROP_INDEX
+    RDB_STMT_DROP_INDEX,
+    RDB_STMT_ADD_FOREIGN_KEY,
+    RDB_STMT_DROP_FOREIGN_KEY
 } rdb_stmt_type_t;
+
+/* JOIN types */
+typedef enum {
+    RDB_JOIN_INNER,
+    RDB_JOIN_LEFT,
+    RDB_JOIN_RIGHT,
+    RDB_JOIN_FULL
+} rdb_join_type_t;
+
+/* JOIN condition */
+typedef struct {
+    char left_table[64];        /* Left table name */
+    char left_column[64];       /* Left column name */
+    char right_table[64];       /* Right table name */
+    char right_column[64];      /* Right column name */
+    rdb_join_type_t join_type;  /* Type of JOIN */
+} rdb_join_condition_t;
+
+/* Query result row (for multi-table queries) */
+typedef struct {
+    size_t row_id;              /* Unique row identifier */
+    fi_array *table_names;      /* Array of table names in result */
+    fi_map *values;             /* Map of "table.column" -> rdb_value_t */
+} rdb_result_row_t;
 
 /* SQL statement structure */
 typedef struct {
@@ -89,6 +131,15 @@ typedef struct {
     fi_array *select_columns;   /* Columns to select */
     char index_name[64];        /* Index name for CREATE/DROP INDEX */
     char index_column[64];      /* Column name for index */
+    /* Multi-table support */
+    fi_array *from_tables;      /* Tables in FROM clause */
+    fi_array *join_conditions;  /* JOIN conditions */
+    fi_array *order_by;         /* ORDER BY columns */
+    size_t limit_value;         /* LIMIT value */
+    size_t offset_value;        /* OFFSET value */
+    /* Foreign key operations */
+    char foreign_key_name[64];  /* Foreign key constraint name */
+    rdb_foreign_key_t *foreign_key; /* Foreign key definition */
 } rdb_statement_t;
 
 /* Database operations */
@@ -115,6 +166,13 @@ int rdb_delete_rows(rdb_database_t *db, const char *table_name, fi_array *where_
 fi_array* rdb_select_rows(rdb_database_t *db, const char *table_name, fi_array *columns, 
                           fi_array *where_conditions);
 
+/* Multi-table operations */
+fi_array* rdb_select_join(rdb_database_t *db, const rdb_statement_t *stmt);
+int rdb_validate_foreign_key(rdb_database_t *db, const char *table_name, 
+                            const char *column_name, const rdb_value_t *value);
+int rdb_enforce_foreign_key_constraints(rdb_database_t *db, const char *table_name, 
+                                       rdb_row_t *row);
+
 /* Index operations */
 int rdb_create_index(rdb_database_t *db, const char *table_name, const char *index_name, 
                      const char *column_name);
@@ -125,10 +183,18 @@ fi_btree* rdb_get_index(rdb_database_t *db, const char *table_name, const char *
 int rdb_add_column(rdb_database_t *db, const char *table_name, const rdb_column_t *column);
 int rdb_drop_column(rdb_database_t *db, const char *table_name, const char *column_name);
 
+/* Foreign key operations */
+int rdb_add_foreign_key(rdb_database_t *db, const rdb_foreign_key_t *foreign_key);
+int rdb_drop_foreign_key(rdb_database_t *db, const char *constraint_name);
+rdb_foreign_key_t* rdb_get_foreign_key(rdb_database_t *db, const char *constraint_name);
+fi_array* rdb_get_foreign_keys_by_table(rdb_database_t *db, const char *table_name);
+
 /* Utility functions */
 void rdb_print_table_info(rdb_database_t *db, const char *table_name);
 void rdb_print_table_data(rdb_database_t *db, const char *table_name, size_t limit);
 void rdb_print_database_info(rdb_database_t *db);
+void rdb_print_join_result(fi_array *result, const rdb_statement_t *stmt);
+void rdb_print_foreign_keys(rdb_database_t *db);
 
 /* Internal utility functions */
 int rdb_get_column_index(rdb_table_t *table, const char *column_name);
@@ -138,6 +204,9 @@ void rdb_update_table_indexes(rdb_table_t *table, rdb_row_t *row);
 void rdb_value_free(void *value);
 void rdb_row_free(void *row);
 void rdb_column_free(void *column);
+void rdb_result_row_free(void *result_row);
+void rdb_foreign_key_free(void *foreign_key);
+void rdb_join_condition_free(void *join_condition);
 
 /* Comparison functions */
 int rdb_value_compare(const void *a, const void *b);
@@ -162,5 +231,17 @@ bool rdb_get_bool_value(const rdb_value_t *value);
 /* String representation */
 char* rdb_value_to_string(const rdb_value_t *value);
 char* rdb_type_to_string(rdb_data_type_t type);
+
+/* Multi-table helper functions */
+rdb_foreign_key_t* rdb_create_foreign_key(const char *constraint_name, const char *table_name, 
+                                         const char *column_name, const char *ref_table_name, 
+                                         const char *ref_column_name);
+rdb_join_condition_t* rdb_create_join_condition(const char *left_table, const char *left_column,
+                                                const char *right_table, const char *right_column,
+                                                rdb_join_type_t join_type);
+rdb_result_row_t* rdb_create_result_row(size_t row_id, fi_array *table_names, fi_map *values);
+bool rdb_row_matches_join_condition(const rdb_row_t *left_row, const rdb_row_t *right_row,
+                                   const rdb_join_condition_t *condition, 
+                                   const rdb_table_t *left_table, const rdb_table_t *right_table);
 
 #endif //__RDB_H__

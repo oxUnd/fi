@@ -28,6 +28,46 @@ void rdb_column_free(void *column) {
     free(column);
 }
 
+void rdb_result_row_free(void *result_row) {
+    if (!result_row) return;
+    
+    rdb_result_row_t *row = (rdb_result_row_t*)result_row;
+    if (row->table_names) {
+        fi_array_destroy(row->table_names);
+    }
+    if (row->values) {
+        fi_map_iterator iter = fi_map_iterator_create(row->values);
+        
+        /* Handle first element if iterator is valid */
+        if (iter.is_valid) {
+            rdb_value_t **val_ptr = (rdb_value_t**)fi_map_iterator_value(&iter);
+            if (val_ptr && *val_ptr) {
+                rdb_value_free(*val_ptr);
+            }
+        }
+        
+        /* Handle remaining elements */
+        while (fi_map_iterator_next(&iter)) {
+            rdb_value_t **val_ptr = (rdb_value_t**)fi_map_iterator_value(&iter);
+            if (val_ptr && *val_ptr) {
+                rdb_value_free(*val_ptr);
+            }
+        }
+        fi_map_destroy(row->values);
+    }
+    free(row);
+}
+
+void rdb_foreign_key_free(void *foreign_key) {
+    if (!foreign_key) return;
+    free(foreign_key);
+}
+
+void rdb_join_condition_free(void *join_condition) {
+    if (!join_condition) return;
+    free(join_condition);
+}
+
 /* Database operations */
 rdb_database_t* rdb_create_database(const char *name) {
     if (!name) return NULL;
@@ -41,6 +81,14 @@ rdb_database_t* rdb_create_database(const char *name) {
     db->tables = fi_map_create(16, sizeof(char*), sizeof(rdb_table_t*), 
                                fi_map_hash_string, fi_map_compare_string);
     if (!db->tables) {
+        free(db);
+        return NULL;
+    }
+    
+    db->foreign_keys = fi_map_create(16, sizeof(char*), sizeof(rdb_foreign_key_t*), 
+                                     fi_map_hash_string, fi_map_compare_string);
+    if (!db->foreign_keys) {
+        fi_map_destroy(db->tables);
         free(db);
         return NULL;
     }
@@ -87,6 +135,27 @@ void rdb_destroy_database(rdb_database_t *db) {
         fi_map_destroy(db->tables);
     }
     
+    if (db->foreign_keys) {
+        fi_map_iterator iter = fi_map_iterator_create(db->foreign_keys);
+        
+        /* Handle first element if iterator is valid */
+        if (iter.is_valid) {
+            rdb_foreign_key_t **fk_ptr = (rdb_foreign_key_t**)fi_map_iterator_value(&iter);
+            if (fk_ptr && *fk_ptr) {
+                rdb_foreign_key_free(*fk_ptr);
+            }
+        }
+        
+        /* Handle remaining elements */
+        while (fi_map_iterator_next(&iter)) {
+            rdb_foreign_key_t **fk_ptr = (rdb_foreign_key_t**)fi_map_iterator_value(&iter);
+            if (fk_ptr && *fk_ptr) {
+                rdb_foreign_key_free(*fk_ptr);
+            }
+        }
+        fi_map_destroy(db->foreign_keys);
+    }
+    
     free(db);
 }
 
@@ -100,10 +169,25 @@ rdb_table_t* rdb_create_table_object(const char *name, fi_array *columns) {
     strncpy(table->name, name, sizeof(table->name) - 1);
     table->name[sizeof(table->name) - 1] = '\0';
     
-    table->columns = fi_array_copy(columns);
+    /* Create columns array with proper deep copies */
+    table->columns = fi_array_create(fi_array_count(columns), sizeof(rdb_column_t*));
     if (!table->columns) {
         free(table);
         return NULL;
+    }
+    
+    /* Copy each column structure */
+    for (size_t i = 0; i < fi_array_count(columns); i++) {
+        rdb_column_t *original_col = *(rdb_column_t**)fi_array_get(columns, i);
+        if (original_col) {
+            rdb_column_t *col_copy = malloc(sizeof(rdb_column_t));
+            if (col_copy) {
+                *col_copy = *original_col;
+                /* Store the pointer directly in the array data */
+                table->columns->data[i] = col_copy;
+                table->columns->size++;
+            }
+        }
     }
     
     table->rows = fi_array_create(100, sizeof(rdb_row_t*));
@@ -334,6 +418,12 @@ int rdb_insert_row(rdb_database_t *db, const char *table_name, fi_array *values)
     row->values = fi_array_copy(values);
     if (!row->values) {
         free(row);
+        return -1;
+    }
+    
+    /* Validate foreign key constraints before inserting */
+    if (rdb_enforce_foreign_key_constraints(db, table_name, row) != 0) {
+        rdb_row_free(row);
         return -1;
     }
     
@@ -985,4 +1075,621 @@ int rdb_string_compare(const void *a, const void *b) {
     if (!str_b) return 1;
     
     return strcmp(str_a, str_b);
+}
+
+/* Multi-table helper functions */
+rdb_foreign_key_t* rdb_create_foreign_key(const char *constraint_name, const char *table_name, 
+                                         const char *column_name, const char *ref_table_name, 
+                                         const char *ref_column_name) {
+    if (!constraint_name || !table_name || !column_name || !ref_table_name || !ref_column_name) {
+        return NULL;
+    }
+    
+    rdb_foreign_key_t *fk = malloc(sizeof(rdb_foreign_key_t));
+    if (!fk) return NULL;
+    
+    strncpy(fk->constraint_name, constraint_name, sizeof(fk->constraint_name) - 1);
+    fk->constraint_name[sizeof(fk->constraint_name) - 1] = '\0';
+    
+    strncpy(fk->table_name, table_name, sizeof(fk->table_name) - 1);
+    fk->table_name[sizeof(fk->table_name) - 1] = '\0';
+    
+    strncpy(fk->column_name, column_name, sizeof(fk->column_name) - 1);
+    fk->column_name[sizeof(fk->column_name) - 1] = '\0';
+    
+    strncpy(fk->ref_table_name, ref_table_name, sizeof(fk->ref_table_name) - 1);
+    fk->ref_table_name[sizeof(fk->ref_table_name) - 1] = '\0';
+    
+    strncpy(fk->ref_column_name, ref_column_name, sizeof(fk->ref_column_name) - 1);
+    fk->ref_column_name[sizeof(fk->ref_column_name) - 1] = '\0';
+    
+    fk->on_delete_cascade = false;
+    fk->on_update_cascade = false;
+    
+    return fk;
+}
+
+rdb_join_condition_t* rdb_create_join_condition(const char *left_table, const char *left_column,
+                                                const char *right_table, const char *right_column,
+                                                rdb_join_type_t join_type) {
+    if (!left_table || !left_column || !right_table || !right_column) {
+        return NULL;
+    }
+    
+    rdb_join_condition_t *condition = malloc(sizeof(rdb_join_condition_t));
+    if (!condition) return NULL;
+    
+    strncpy(condition->left_table, left_table, sizeof(condition->left_table) - 1);
+    condition->left_table[sizeof(condition->left_table) - 1] = '\0';
+    
+    strncpy(condition->left_column, left_column, sizeof(condition->left_column) - 1);
+    condition->left_column[sizeof(condition->left_column) - 1] = '\0';
+    
+    strncpy(condition->right_table, right_table, sizeof(condition->right_table) - 1);
+    condition->right_table[sizeof(condition->right_table) - 1] = '\0';
+    
+    strncpy(condition->right_column, right_column, sizeof(condition->right_column) - 1);
+    condition->right_column[sizeof(condition->right_column) - 1] = '\0';
+    
+    condition->join_type = join_type;
+    
+    return condition;
+}
+
+rdb_result_row_t* rdb_create_result_row(size_t row_id, fi_array *table_names, fi_map *values) {
+    if (!table_names || !values) return NULL;
+    
+    rdb_result_row_t *row = malloc(sizeof(rdb_result_row_t));
+    if (!row) return NULL;
+    
+    row->row_id = row_id;
+    row->table_names = fi_array_copy(table_names);
+    
+    /* Create a new map and copy values */
+    row->values = fi_map_create(fi_map_size(values), sizeof(char*), sizeof(rdb_value_t*), 
+                                fi_map_hash_string, fi_map_compare_string);
+    
+    if (!row->table_names || !row->values) {
+        rdb_result_row_free(row);
+        return NULL;
+    }
+    
+    /* Copy values from the original map */
+    fi_map_iterator iter = fi_map_iterator_create(values);
+    
+    /* Handle first element if iterator is valid */
+    if (iter.is_valid) {
+        const char **key_ptr = (const char**)fi_map_iterator_key(&iter);
+        rdb_value_t **val_ptr = (rdb_value_t**)fi_map_iterator_value(&iter);
+        if (key_ptr && *key_ptr && val_ptr && *val_ptr) {
+            fi_map_put(row->values, key_ptr, val_ptr);
+        }
+    }
+    
+    /* Handle remaining elements */
+    while (fi_map_iterator_next(&iter)) {
+        const char **key_ptr = (const char**)fi_map_iterator_key(&iter);
+        rdb_value_t **val_ptr = (rdb_value_t**)fi_map_iterator_value(&iter);
+        if (key_ptr && *key_ptr && val_ptr && *val_ptr) {
+            fi_map_put(row->values, key_ptr, val_ptr);
+        }
+    }
+    
+    return row;
+}
+
+/* Foreign key operations */
+int rdb_add_foreign_key(rdb_database_t *db, const rdb_foreign_key_t *foreign_key) {
+    if (!db || !foreign_key) return -1;
+    
+    if (!db->is_open) return -1;
+    
+    /* Check if referenced table exists */
+    if (!rdb_table_exists(db, foreign_key->ref_table_name)) {
+        printf("Error: Referenced table '%s' does not exist\n", foreign_key->ref_table_name);
+        return -1;
+    }
+    
+    /* Check if referencing table exists */
+    if (!rdb_table_exists(db, foreign_key->table_name)) {
+        printf("Error: Table '%s' does not exist\n", foreign_key->table_name);
+        return -1;
+    }
+    
+    /* Check if constraint name already exists */
+    const char *constraint_name = foreign_key->constraint_name;
+    if (fi_map_contains(db->foreign_keys, &constraint_name)) {
+        printf("Error: Foreign key constraint '%s' already exists\n", foreign_key->constraint_name);
+        return -1;
+    }
+    
+    /* Create a copy of the foreign key */
+    rdb_foreign_key_t *fk_copy = malloc(sizeof(rdb_foreign_key_t));
+    if (!fk_copy) return -1;
+    
+    *fk_copy = *foreign_key;
+    
+    /* Add to database */
+    if (fi_map_put(db->foreign_keys, &constraint_name, &fk_copy) != 0) {
+        free(fk_copy);
+        return -1;
+    }
+    
+    printf("Foreign key constraint '%s' added successfully\n", foreign_key->constraint_name);
+    return 0;
+}
+
+int rdb_drop_foreign_key(rdb_database_t *db, const char *constraint_name) {
+    if (!db || !constraint_name) return -1;
+    
+    if (!db->is_open) return -1;
+    
+    rdb_foreign_key_t *foreign_key = NULL;
+    if (fi_map_get(db->foreign_keys, &constraint_name, &foreign_key) != 0) {
+        printf("Error: Foreign key constraint '%s' does not exist\n", constraint_name);
+        return -1;
+    }
+    
+    /* Remove from database */
+    fi_map_remove(db->foreign_keys, &constraint_name);
+    if (foreign_key) {
+        rdb_foreign_key_free(foreign_key);
+    }
+    
+    printf("Foreign key constraint '%s' dropped successfully\n", constraint_name);
+    return 0;
+}
+
+rdb_foreign_key_t* rdb_get_foreign_key(rdb_database_t *db, const char *constraint_name) {
+    if (!db || !constraint_name) return NULL;
+    
+    rdb_foreign_key_t *foreign_key = NULL;
+    if (fi_map_get(db->foreign_keys, &constraint_name, &foreign_key) != 0) {
+        return NULL;
+    }
+    
+    return foreign_key;
+}
+
+fi_array* rdb_get_foreign_keys_by_table(rdb_database_t *db, const char *table_name) {
+    if (!db || !table_name) return NULL;
+    
+    fi_array *result = fi_array_create(10, sizeof(rdb_foreign_key_t*));
+    if (!result) return NULL;
+    
+    fi_map_iterator iter = fi_map_iterator_create(db->foreign_keys);
+    
+    /* Handle first element if iterator is valid */
+    if (iter.is_valid) {
+        rdb_foreign_key_t **fk_ptr = (rdb_foreign_key_t**)fi_map_iterator_value(&iter);
+        if (fk_ptr && *fk_ptr && strcmp((*fk_ptr)->table_name, table_name) == 0) {
+            fi_array_push(result, fk_ptr);
+        }
+    }
+    
+    /* Handle remaining elements */
+    while (fi_map_iterator_next(&iter)) {
+        rdb_foreign_key_t **fk_ptr = (rdb_foreign_key_t**)fi_map_iterator_value(&iter);
+        if (fk_ptr && *fk_ptr && strcmp((*fk_ptr)->table_name, table_name) == 0) {
+            fi_array_push(result, fk_ptr);
+        }
+    }
+    
+    return result;
+}
+/* Multi-table operations */
+fi_array* rdb_select_join(rdb_database_t *db, const rdb_statement_t *stmt) {
+    if (!db || !stmt || !stmt->from_tables || fi_array_count(stmt->from_tables) == 0) {
+        return NULL;
+    }
+    
+    /* Create result array */
+    fi_array *result = fi_array_create(100, sizeof(rdb_result_row_t*));
+    if (!result) return NULL;
+    
+    /* Get the first table */
+    const char *first_table = *(const char**)fi_array_get(stmt->from_tables, 0);
+    rdb_table_t *table1 = rdb_get_table(db, first_table);
+    if (!table1) {
+        fi_array_destroy(result);
+        return NULL;
+    }
+    
+    /* If only one table, perform simple select */
+    if (fi_array_count(stmt->from_tables) == 1) {
+        for (size_t i = 0; i < fi_array_count(table1->rows); i++) {
+            rdb_row_t *row = *(rdb_row_t**)fi_array_get(table1->rows, i);
+            if (!row) continue;
+            
+            /* Create result row */
+            fi_array *table_names = fi_array_create(1, sizeof(char*));
+            fi_map *values = fi_map_create(16, sizeof(char*), sizeof(rdb_value_t*), 
+                                          fi_map_hash_string, fi_map_compare_string);
+            
+            if (table_names && values) {
+                fi_array_push(table_names, &first_table);
+                
+                /* Copy values with table.column keys */
+                for (size_t j = 0; j < fi_array_count(table1->columns); j++) {
+                    rdb_column_t *col = (rdb_column_t*)fi_array_get(table1->columns, j);
+                    rdb_value_t *val = *(rdb_value_t**)fi_array_get(row->values, j);
+                    
+                    if (col && val) {
+                        char key[128];
+                        snprintf(key, sizeof(key), "%s.%s", first_table, col->name);
+                        
+                        /* Create a copy of the value */
+                        rdb_value_t *val_copy = malloc(sizeof(rdb_value_t));
+                        if (val_copy) {
+                            *val_copy = *val;
+                            if (val->type == RDB_TYPE_VARCHAR || val->type == RDB_TYPE_TEXT) {
+                                if (val->data.string_val) {
+                                    val_copy->data.string_val = malloc(strlen(val->data.string_val) + 1);
+                                    if (val_copy->data.string_val) {
+                                        strcpy(val_copy->data.string_val, val->data.string_val);
+                                    }
+                                }
+                            }
+                            const char *key_ptr = key; fi_map_put(values, &key_ptr, &val_copy);
+                        }
+                    }
+                }
+                
+                rdb_result_row_t *result_row = rdb_create_result_row(row->row_id, table_names, values);
+                if (result_row) {
+                    fi_array_push(result, &result_row);
+                }
+            }
+            
+            if (table_names) fi_array_destroy(table_names);
+            if (values) fi_map_destroy(values);
+        }
+        return result;
+    }
+    
+    /* Multi-table JOIN - simplified implementation for two tables */
+    if (fi_array_count(stmt->from_tables) == 2) {
+        const char *second_table = *(const char**)fi_array_get(stmt->from_tables, 1);
+        rdb_table_t *table2 = rdb_get_table(db, second_table);
+        if (!table2) {
+            fi_array_destroy(result);
+            return NULL;
+        }
+        
+        /* Perform cartesian product with join conditions */
+        for (size_t i = 0; i < fi_array_count(table1->rows); i++) {
+            rdb_row_t *row1 = *(rdb_row_t**)fi_array_get(table1->rows, i);
+            if (!row1) continue;
+            
+            for (size_t j = 0; j < fi_array_count(table2->rows); j++) {
+                rdb_row_t *row2 = *(rdb_row_t**)fi_array_get(table2->rows, j);
+                if (!row2) continue;
+                
+                /* Check join conditions if any */
+                bool matches = true;
+                if (stmt->join_conditions && fi_array_count(stmt->join_conditions) > 0) {
+                    matches = false;
+                    for (size_t k = 0; k < fi_array_count(stmt->join_conditions); k++) {
+                        rdb_join_condition_t *condition = *(rdb_join_condition_t**)fi_array_get(stmt->join_conditions, k);
+                        if (rdb_row_matches_join_condition(row1, row2, condition, table1, table2)) {
+                            matches = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if (matches) {
+                    /* Create result row */
+                    fi_array *table_names = fi_array_create(2, sizeof(char*));
+                    fi_map *values = fi_map_create(32, sizeof(char*), sizeof(rdb_value_t*), 
+                                                  fi_map_hash_string, fi_map_compare_string);
+                    
+                    if (table_names && values) {
+                        fi_array_push(table_names, &first_table);
+                        fi_array_push(table_names, &second_table);
+                        
+                        /* Add values from first table */
+                        for (size_t k = 0; k < fi_array_count(table1->columns); k++) {
+                            rdb_column_t *col = (rdb_column_t*)fi_array_get(table1->columns, k);
+                            rdb_value_t *val = *(rdb_value_t**)fi_array_get(row1->values, k);
+                            
+                            if (col && val) {
+                                char key[128];
+                                snprintf(key, sizeof(key), "%s.%s", first_table, col->name);
+                                
+                                rdb_value_t *val_copy = malloc(sizeof(rdb_value_t));
+                                if (val_copy) {
+                                    *val_copy = *val;
+                                    if (val->type == RDB_TYPE_VARCHAR || val->type == RDB_TYPE_TEXT) {
+                                        if (val->data.string_val) {
+                                            val_copy->data.string_val = malloc(strlen(val->data.string_val) + 1);
+                                            if (val_copy->data.string_val) {
+                                                strcpy(val_copy->data.string_val, val->data.string_val);
+                                            }
+                                        }
+                                    }
+                                    const char *key_ptr = key; fi_map_put(values, &key_ptr, &val_copy);
+                                }
+                            }
+                        }
+                        
+                        /* Add values from second table */
+                        for (size_t k = 0; k < fi_array_count(table2->columns); k++) {
+                            rdb_column_t *col = (rdb_column_t*)fi_array_get(table2->columns, k);
+                            rdb_value_t *val = *(rdb_value_t**)fi_array_get(row2->values, k);
+                            
+                            if (col && val) {
+                                char key[128];
+                                snprintf(key, sizeof(key), "%s.%s", second_table, col->name);
+                                
+                                rdb_value_t *val_copy = malloc(sizeof(rdb_value_t));
+                                if (val_copy) {
+                                    *val_copy = *val;
+                                    if (val->type == RDB_TYPE_VARCHAR || val->type == RDB_TYPE_TEXT) {
+                                        if (val->data.string_val) {
+                                            val_copy->data.string_val = malloc(strlen(val->data.string_val) + 1);
+                                            if (val_copy->data.string_val) {
+                                                strcpy(val_copy->data.string_val, val->data.string_val);
+                                            }
+                                        }
+                                    }
+                                    const char *key_ptr = key; fi_map_put(values, &key_ptr, &val_copy);
+                                }
+                            }
+                        }
+                        
+                        size_t combined_row_id = (row1->row_id << 16) | row2->row_id;
+                        rdb_result_row_t *result_row = rdb_create_result_row(combined_row_id, table_names, values);
+                        if (result_row) {
+                            fi_array_push(result, &result_row);
+                        }
+                    }
+                    
+                    if (table_names) fi_array_destroy(table_names);
+                    if (values) fi_map_destroy(values);
+                }
+            }
+        }
+    }
+    
+    return result;
+}
+
+bool rdb_row_matches_join_condition(const rdb_row_t *left_row, const rdb_row_t *right_row,
+                                   const rdb_join_condition_t *condition, 
+                                   const rdb_table_t *left_table, const rdb_table_t *right_table) {
+    if (!left_row || !right_row || !condition || !left_table || !right_table) {
+        return false;
+    }
+    
+    /* Get column indices */
+    int left_col_idx = rdb_get_column_index((rdb_table_t*)left_table, condition->left_column);
+    int right_col_idx = rdb_get_column_index((rdb_table_t*)right_table, condition->right_column);
+    
+    if (left_col_idx < 0 || right_col_idx < 0) {
+        return false;
+    }
+    
+    /* Get values */
+    rdb_value_t *left_val = *(rdb_value_t**)fi_array_get(left_row->values, left_col_idx);
+    rdb_value_t *right_val = *(rdb_value_t**)fi_array_get(right_row->values, right_col_idx);
+    
+    if (!left_val || !right_val) {
+        return false;
+    }
+    
+    /* Compare values */
+    return rdb_value_compare(&left_val, &right_val) == 0;
+}
+
+int rdb_validate_foreign_key(rdb_database_t *db, const char *table_name, 
+                            const char *column_name, const rdb_value_t *value) {
+    if (!db || !table_name || !column_name || !value) return -1;
+    
+    /* Find foreign key constraints for this table/column */
+    fi_map_iterator iter = fi_map_iterator_create(db->foreign_keys);
+    
+    /* Handle first element if iterator is valid */
+    if (iter.is_valid) {
+        rdb_foreign_key_t **fk_ptr = (rdb_foreign_key_t**)fi_map_iterator_value(&iter);
+        if (fk_ptr && *fk_ptr) {
+            rdb_foreign_key_t *fk = *fk_ptr;
+            if (strcmp(fk->table_name, table_name) == 0 && 
+                strcmp(fk->column_name, column_name) == 0) {
+                
+                /* Check if referenced value exists */
+                rdb_table_t *ref_table = rdb_get_table(db, fk->ref_table_name);
+                if (!ref_table) return -1;
+                
+                int ref_col_idx = rdb_get_column_index(ref_table, fk->ref_column_name);
+                if (ref_col_idx < 0) return -1;
+                
+                /* Search for matching value in referenced table */
+                for (size_t i = 0; i < fi_array_count(ref_table->rows); i++) {
+                    rdb_row_t *row = *(rdb_row_t**)fi_array_get(ref_table->rows, i);
+                    if (!row || !row->values) continue;
+                    
+                    rdb_value_t *ref_val = *(rdb_value_t**)fi_array_get(row->values, ref_col_idx);
+                    if (ref_val && rdb_value_compare(&value, &ref_val) == 0) {
+                        return 0; /* Valid foreign key */
+                    }
+                }
+                
+                return -1; /* Foreign key violation */
+            }
+        }
+    }
+    
+    /* Handle remaining elements */
+    while (fi_map_iterator_next(&iter)) {
+        rdb_foreign_key_t **fk_ptr = (rdb_foreign_key_t**)fi_map_iterator_value(&iter);
+        if (fk_ptr && *fk_ptr) {
+            rdb_foreign_key_t *fk = *fk_ptr;
+            if (strcmp(fk->table_name, table_name) == 0 && 
+                strcmp(fk->column_name, column_name) == 0) {
+                
+                /* Check if referenced value exists */
+                rdb_table_t *ref_table = rdb_get_table(db, fk->ref_table_name);
+                if (!ref_table) return -1;
+                
+                int ref_col_idx = rdb_get_column_index(ref_table, fk->ref_column_name);
+                if (ref_col_idx < 0) return -1;
+                
+                /* Search for matching value in referenced table */
+                for (size_t i = 0; i < fi_array_count(ref_table->rows); i++) {
+                    rdb_row_t *row = *(rdb_row_t**)fi_array_get(ref_table->rows, i);
+                    if (!row || !row->values) continue;
+                    
+                    rdb_value_t *ref_val = *(rdb_value_t**)fi_array_get(row->values, ref_col_idx);
+                    if (ref_val && rdb_value_compare(&value, &ref_val) == 0) {
+                        return 0; /* Valid foreign key */
+                    }
+                }
+                
+                return -1; /* Foreign key violation */
+            }
+        }
+    }
+    
+    return 0; /* No foreign key constraint found */
+}
+
+int rdb_enforce_foreign_key_constraints(rdb_database_t *db, const char *table_name, 
+                                       rdb_row_t *row) {
+    if (!db || !table_name || !row) return -1;
+    
+    rdb_table_t *table = rdb_get_table(db, table_name);
+    if (!table) return -1;
+    
+    /* Check each column for foreign key constraints */
+    for (size_t i = 0; i < fi_array_count(table->columns); i++) {
+        rdb_column_t *col = (rdb_column_t*)fi_array_get(table->columns, i);
+        if (!col) continue;
+        
+        rdb_value_t *val = *(rdb_value_t**)fi_array_get(row->values, i);
+        if (!val) continue;
+        
+        if (rdb_validate_foreign_key(db, table_name, col->name, val) != 0) {
+            printf("Error: Foreign key constraint violation on column '%s'\n", col->name);
+            return -1;
+        }
+    }
+    
+    return 0;
+}
+
+
+/* Utility functions for multi-table operations */
+void rdb_print_join_result(fi_array *result, const rdb_statement_t *stmt) {
+    if (!result || !stmt) return;
+    
+    printf("\n=== JOIN Query Result ===\n");
+    
+    size_t result_count = fi_array_count(result);
+    if (result_count == 0) {
+        printf("No results found\n");
+        return;
+    }
+    
+    printf("Found %zu result rows\n\n", result_count);
+    
+    /* Print headers */
+    if (result_count > 0) {
+        rdb_result_row_t *first_row = *(rdb_result_row_t**)fi_array_get(result, 0);
+        if (first_row && first_row->values) {
+            fi_map_iterator iter = fi_map_iterator_create(first_row->values);
+            
+            /* Print column headers */
+            printf("%-8s", "Row ID");
+            if (iter.is_valid) {
+                const char **key_ptr = (const char**)fi_map_iterator_key(&iter);
+                if (key_ptr && *key_ptr) {
+                    printf("%-20s", *key_ptr);
+                }
+            }
+            
+            while (fi_map_iterator_next(&iter)) {
+                const char **key_ptr = (const char**)fi_map_iterator_key(&iter);
+                if (key_ptr && *key_ptr) {
+                    printf("%-20s", *key_ptr);
+                }
+            }
+            printf("\n");
+            printf("%s\n", "------------------------------------------------------------------------");
+        }
+    }
+    
+    /* Print data rows */
+    for (size_t i = 0; i < result_count; i++) {
+        rdb_result_row_t *row = *(rdb_result_row_t**)fi_array_get(result, i);
+        if (!row || !row->values) continue;
+        
+        printf("%-8zu", row->row_id);
+        
+        fi_map_iterator iter = fi_map_iterator_create(row->values);
+        
+        if (iter.is_valid) {
+            rdb_value_t **val_ptr = (rdb_value_t**)fi_map_iterator_value(&iter);
+            if (val_ptr && *val_ptr) {
+                char *str = rdb_value_to_string(*val_ptr);
+                printf("%-20s", str ? str : "NULL");
+                if (str) free(str);
+            }
+        }
+        
+        while (fi_map_iterator_next(&iter)) {
+            rdb_value_t **val_ptr = (rdb_value_t**)fi_map_iterator_value(&iter);
+            if (val_ptr && *val_ptr) {
+                char *str = rdb_value_to_string(*val_ptr);
+                printf("%-20s", str ? str : "NULL");
+                if (str) free(str);
+            }
+        }
+        printf("\n");
+    }
+}
+
+void rdb_print_foreign_keys(rdb_database_t *db) {
+    if (!db || !db->foreign_keys) return;
+    
+    printf("\n=== Foreign Key Constraints ===\n");
+    
+    if (fi_map_size(db->foreign_keys) == 0) {
+        printf("No foreign key constraints defined\n");
+        return;
+    }
+    
+    printf("%-20s %-20s %-20s %-20s %-20s\n", 
+           "Constraint", "Table", "Column", "Ref Table", "Ref Column");
+    printf("%s\n", "------------------------------------------------------------------------");
+    
+    fi_map_iterator iter = fi_map_iterator_create(db->foreign_keys);
+    
+    /* Handle first element if iterator is valid */
+    if (iter.is_valid) {
+        rdb_foreign_key_t **fk_ptr = (rdb_foreign_key_t**)fi_map_iterator_value(&iter);
+        if (fk_ptr && *fk_ptr) {
+            rdb_foreign_key_t *fk = *fk_ptr;
+            printf("%-20s %-20s %-20s %-20s %-20s\n",
+                   fk->constraint_name,
+                   fk->table_name,
+                   fk->column_name,
+                   fk->ref_table_name,
+                   fk->ref_column_name);
+        }
+    }
+    
+    /* Handle remaining elements */
+    while (fi_map_iterator_next(&iter)) {
+        rdb_foreign_key_t **fk_ptr = (rdb_foreign_key_t**)fi_map_iterator_value(&iter);
+        if (fk_ptr && *fk_ptr) {
+            rdb_foreign_key_t *fk = *fk_ptr;
+            printf("%-20s %-20s %-20s %-20s %-20s\n",
+                   fk->constraint_name,
+                   fk->table_name,
+                   fk->column_name,
+                   fk->ref_table_name,
+                   fk->ref_column_name);
+        }
+    }
 }
