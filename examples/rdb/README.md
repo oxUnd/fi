@@ -715,6 +715,8 @@ CREATE TABLE students (
     gpa FLOAT
 )
 
+CREATE TABLE students ( id INT PRIMARY KEY, name VARCHAR(50), age INT, gpa FLOAT)
+
 -- 插入数据
 INSERT INTO students VALUES (1, 'Alice', 20, 3.8)
 INSERT INTO students VALUES (2, 'Bob', 22, 3.5)

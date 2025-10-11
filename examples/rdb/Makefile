@@ -2,7 +2,8 @@
 
 # Compiler and flags
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -g -O2 -pthread
+# CFLAGS = -Wall -Wextra -std=c99 -g -O2 -pthread
+CFLAGS = -Wall -Wextra -std=c99 -g -pthread
 INCLUDES = -I../../src/include -I.
 LDFLAGS = -L../../src/.libs -static -lfi -lm -pthread
 
