@@ -1,4 +1,10 @@
 #include "rdb.h"
+#include "sql_parser.h"
+
+/* Forward declarations */
+static bool rdb_evaluate_where_conditions(const rdb_table_t *table, const rdb_row_t *row,
+                                         fi_array *where_conditions);
+static void rdb_remove_from_table_indexes(rdb_table_t *table, rdb_row_t *row);
 
 /* Memory management functions */
 void rdb_value_free(void *value) {
@@ -465,13 +471,8 @@ int rdb_update_rows_transactional(rdb_database_t *db, const char *table_name, fi
         rdb_row_t *row = *(rdb_row_t**)fi_array_get(table->rows, i);
         if (!row || !row->values) continue;
 
-        /* Check WHERE conditions (simplified - just check if conditions exist) */
-        bool matches = true;
-        if (where_conditions && fi_array_count(where_conditions) > 0) {
-            /* For now, assume all rows match if WHERE conditions are provided */
-            /* In a real implementation, this would evaluate the conditions */
-            matches = true;
-        }
+        /* Evaluate WHERE conditions */
+        bool matches = rdb_evaluate_where_conditions(table, row, where_conditions);
 
         if (matches) {
             /* Create a copy of the old row for logging */
@@ -480,6 +481,9 @@ int rdb_update_rows_transactional(rdb_database_t *db, const char *table_name, fi
                 old_row->row_id = row->row_id;
                 old_row->values = fi_array_copy(row->values);
             }
+
+            /* Remove old values from indexes for updated columns */
+            rdb_remove_from_table_indexes(table, row);
 
             /* Update the specified columns */
             for (size_t j = 0; j < fi_array_count(set_columns); j++) {
@@ -509,6 +513,9 @@ int rdb_update_rows_transactional(rdb_database_t *db, const char *table_name, fi
                     }
                 }
             }
+
+            /* Add new values to indexes */
+            rdb_update_table_indexes(table, row);
 
             /* Log the operation */
             rdb_log_operation(db, RDB_OP_UPDATE, table_name, row->row_id, old_row, row);
@@ -541,13 +548,8 @@ int rdb_delete_rows_transactional(rdb_database_t *db, const char *table_name, fi
         rdb_row_t *row = *(rdb_row_t**)fi_array_get(table->rows, i - 1);
         if (!row) continue;
 
-        /* Check WHERE conditions (simplified - just check if conditions exist) */
-        bool matches = true;
-        if (where_conditions && fi_array_count(where_conditions) > 0) {
-            /* For now, assume all rows match if WHERE conditions are provided */
-            /* In a real implementation, this would evaluate the conditions */
-            matches = true;
-        }
+        /* Evaluate WHERE conditions */
+        bool matches = rdb_evaluate_where_conditions(table, row, where_conditions);
 
         if (matches) {
             /* Create a copy of the row for logging before deletion */
@@ -559,6 +561,9 @@ int rdb_delete_rows_transactional(rdb_database_t *db, const char *table_name, fi
 
             /* Log the operation before deletion */
             rdb_log_operation(db, RDB_OP_DELETE, table_name, row->row_id, old_row, NULL);
+
+            /* Remove from indexes before deleting */
+            rdb_remove_from_table_indexes(table, row);
 
             /* Remove from array and free memory */
             fi_array_splice(table->rows, i - 1, 1, NULL);
@@ -1223,16 +1228,94 @@ int rdb_get_column_index(rdb_table_t *table, const char *column_name) {
     return -1;
 }
 
-void rdb_update_table_indexes(rdb_table_t *table, rdb_row_t *row) {
-    if (!table || !row) return;
+/* Helper function to get column name for an index by trying to match index name patterns */
+static const char* rdb_get_index_column_name(rdb_table_t *table, const char *index_name) {
+    if (!table || !index_name) return NULL;
 
-    /* Update all indexes with new row data */
+    /* Try to match index name with column names (common pattern: idx_column_name or column_name_idx) */
+    for (size_t i = 0; i < fi_array_count(table->columns); i++) {
+        rdb_column_t *col = *(rdb_column_t**)fi_array_get(table->columns, i);
+        if (col) {
+            /* Check if index name matches column name or contains it */
+            if (strcmp(index_name, col->name) == 0 ||
+                strstr(index_name, col->name) != NULL) {
+                return col->name;
+            }
+        }
+    }
+
+    /* Fallback: try primary key column */
+    if (table->primary_key[0] != '\0') {
+        return table->primary_key;
+    }
+
+    return NULL;
+}
+
+void rdb_update_table_indexes(rdb_table_t *table, rdb_row_t *row) {
+    if (!table || !row || !row->values) return;
+
+    /* Update all indexes incrementally with new row data */
     fi_map_iterator iter = fi_map_iterator_create(table->indexes);
     while (fi_map_iterator_next(&iter)) {
-        /* For simplicity, we'll rebuild the index */
-        /* In a real implementation, we'd update incrementally */
-        (void)fi_map_iterator_key(&iter);   /* Suppress unused variable warning */
-        (void)fi_map_iterator_value(&iter); /* Suppress unused variable warning */
+        const char *index_name = (const char*)fi_map_iterator_key(&iter);
+        fi_btree **index_tree_ptr = (fi_btree**)fi_map_iterator_value(&iter);
+        
+        if (!index_name || !index_tree_ptr || !*index_tree_ptr) continue;
+
+        /* Try to find the column this index is on */
+        const char *column_name = rdb_get_index_column_name(table, index_name);
+        if (!column_name) {
+            /* If we can't determine the column, skip this index */
+            /* In a full implementation, we'd store column name with each index */
+            continue;
+        }
+
+        /* Get the column index */
+        int col_index = rdb_get_column_index(table, column_name);
+        if (col_index < 0 || col_index >= (int)fi_array_count(row->values)) {
+            continue;
+        }
+
+        /* Get the value for this column */
+        rdb_value_t *value = *(rdb_value_t**)fi_array_get(row->values, col_index);
+        if (value && !value->is_null) {
+            /* Insert the value into the index */
+            fi_btree_insert(*index_tree_ptr, &value);
+        }
+    }
+}
+
+/* Remove row from indexes (for DELETE operations) */
+static void rdb_remove_from_table_indexes(rdb_table_t *table, rdb_row_t *row) {
+    if (!table || !row || !row->values) return;
+
+    /* Remove row from all indexes */
+    fi_map_iterator iter = fi_map_iterator_create(table->indexes);
+    while (fi_map_iterator_next(&iter)) {
+        const char *index_name = (const char*)fi_map_iterator_key(&iter);
+        fi_btree **index_tree_ptr = (fi_btree**)fi_map_iterator_value(&iter);
+        
+        if (!index_name || !index_tree_ptr || !*index_tree_ptr) continue;
+
+        /* Try to find the column this index is on */
+        const char *column_name = rdb_get_index_column_name(table, index_name);
+        if (!column_name) {
+            continue;
+        }
+
+        /* Get the column index */
+        int col_index = rdb_get_column_index(table, column_name);
+        if (col_index < 0 || col_index >= (int)fi_array_count(row->values)) {
+            continue;
+        }
+
+        /* Get the value for this column */
+        rdb_value_t *value = *(rdb_value_t**)fi_array_get(row->values, col_index);
+        if (value && !value->is_null) {
+            /* Remove the value from the index */
+            fi_btree_delete(*index_tree_ptr, &value);
+        }
     }
 }
 
@@ -1285,6 +1368,198 @@ uint32_t rdb_string_hash(const void *key, size_t key_size) {
     return fi_map_hash_string(key, key_size);
 }
 
+/* WHERE condition evaluation helper functions */
+static bool rdb_evaluate_single_condition(const rdb_table_t *table, const rdb_row_t *row,
+                                         const sql_where_condition_t *condition);
+static bool rdb_evaluate_where_conditions(const rdb_table_t *table, const rdb_row_t *row,
+                                         fi_array *where_conditions);
+
+static bool rdb_evaluate_single_condition(const rdb_table_t *table, const rdb_row_t *row,
+                                         const sql_where_condition_t *condition) {
+    if (!table || !row || !condition || !row->values) {
+        return false;
+    }
+
+    /* Get column index */
+    int col_index = rdb_get_column_index((rdb_table_t*)table, condition->column_name);
+    if (col_index < 0 || col_index >= (int)fi_array_count(row->values)) {
+        return false;
+    }
+
+    /* Get row value */
+    rdb_value_t *row_value = *(rdb_value_t**)fi_array_get(row->values, col_index);
+    if (!row_value) {
+        return false;
+    }
+
+    /* Get condition value */
+    rdb_value_t *condition_value = condition->value;
+    if (!condition_value) {
+        return false;
+    }
+
+    /* Handle IS operator (NULL checks) */
+    if (condition->operator == SQL_OP_IS) {
+        bool is_null_check = (condition_value->is_null || 
+                             (condition_value->type == RDB_TYPE_VARCHAR && 
+                              condition_value->data.string_val &&
+                              strcasecmp(condition_value->data.string_val, "NULL") == 0));
+        return row_value->is_null == is_null_check;
+    }
+
+    /* Handle NULL values for other operators */
+    if (row_value->is_null || condition_value->is_null) {
+        return false; /* NULL comparisons (except IS) return false */
+    }
+
+    /* Compare values based on operator */
+    int cmp_result = rdb_value_compare(&row_value, &condition_value);
+
+    switch (condition->operator) {
+        case SQL_OP_EQUAL:
+            return cmp_result == 0;
+
+        case SQL_OP_NOT_EQUAL:
+            return cmp_result != 0;
+
+        case SQL_OP_LESS_THAN:
+            return cmp_result < 0;
+
+        case SQL_OP_GREATER_THAN:
+            return cmp_result > 0;
+
+        case SQL_OP_LESS_EQUAL:
+            return cmp_result <= 0;
+
+        case SQL_OP_GREATER_EQUAL:
+            return cmp_result >= 0;
+
+        case SQL_OP_LIKE: {
+            /* Pattern matching for LIKE operator */
+            if (row_value->type != RDB_TYPE_VARCHAR && row_value->type != RDB_TYPE_TEXT) {
+                return false;
+            }
+            if (condition_value->type != RDB_TYPE_VARCHAR && condition_value->type != RDB_TYPE_TEXT) {
+                return false;
+            }
+
+            const char *row_str = row_value->data.string_val;
+            const char *pattern = condition_value->data.string_val;
+
+            if (!row_str || !pattern) {
+                return false;
+            }
+
+            /* Simple LIKE implementation: % matches any sequence, _ matches any single character */
+            const char *r = row_str;
+            const char *p = pattern;
+
+            while (*p != '\0') {
+                if (*p == '%') {
+                    /* Match zero or more characters */
+                    p++;
+                    if (*p == '\0') {
+                        return true; /* % at end matches everything */
+                    }
+                    /* Try to match the rest of the pattern */
+                    while (*r != '\0') {
+                        const char *r_save = r;
+                        const char *p_save = p;
+                        while (*p != '\0' && *p != '%' && *p != '_') {
+                            if (*r != *p) break;
+                            r++;
+                            p++;
+                        }
+                        if (*p == '\0' || (*p == '%' && *(p+1) == '\0')) {
+                            return true;
+                        }
+                        if (*p == '%' || *p == '_' || *r == '\0') {
+                            r = r_save;
+                            p = p_save;
+                            break;
+                        }
+                        r = r_save + 1;
+                        p = p_save;
+                    }
+                    if (*r == '\0') {
+                        return false;
+                    }
+                } else if (*p == '_') {
+                    /* Match any single character */
+                    if (*r == '\0') {
+                        return false;
+                    }
+                    r++;
+                    p++;
+                } else {
+                    /* Match exact character */
+                    if (*r != *p) {
+                        return false;
+                    }
+                    r++;
+                    p++;
+                }
+            }
+
+            /* Pattern exhausted - check if row string is also exhausted */
+            return *r == '\0';
+        }
+
+        case SQL_OP_IN: {
+            /* IN operator - check if value is in a list */
+            /* For simplicity, we'll treat the condition value as a single value */
+            /* In a full implementation, this would parse a list from the value */
+            return cmp_result == 0;
+        }
+
+        default:
+            return false;
+    }
+}
+
+/* Evaluate WHERE conditions against a row */
+static bool rdb_evaluate_where_conditions(const rdb_table_t *table, const rdb_row_t *row,
+                                         fi_array *where_conditions) {
+    if (!table || !row || !where_conditions || fi_array_count(where_conditions) == 0) {
+        return true; /* No conditions means match all */
+    }
+
+    /* Evaluate conditions with AND/OR logic */
+    bool result = true; /* Start with true for AND logic */
+    bool last_result = false;
+
+    for (size_t i = 0; i < fi_array_count(where_conditions); i++) {
+        sql_where_condition_t *condition = *(sql_where_condition_t**)fi_array_get(where_conditions, i);
+        if (!condition) continue;
+
+        bool condition_result = rdb_evaluate_single_condition(table, row, condition);
+
+        /* Handle logical connectors */
+        if (i > 0) {
+            const char *connector = condition->logical_connector;
+            if (strlen(connector) > 0) {
+                if (strcasecmp(connector, "AND") == 0) {
+                    result = result && condition_result;
+                } else if (strcasecmp(connector, "OR") == 0) {
+                    /* For OR, we need to track the previous condition */
+                    /* This is a simplified implementation - in full SQL, OR has different precedence */
+                    result = last_result || condition_result;
+                }
+            } else {
+                /* Default to AND if no connector specified */
+                result = result && condition_result;
+            }
+        } else {
+            /* First condition */
+            result = condition_result;
+        }
+
+        last_result = condition_result;
+    }
+
+    return result;
+}
+
 /* String representation */
 char* rdb_value_to_string(const rdb_value_t *value) {
     if (!value) return NULL;
@@ -1299,7 +1574,7 @@ char* rdb_value_to_string(const rdb_value_t *value) {
 
     switch (value->type) {
         case RDB_TYPE_INT:
-            snprintf(str, 256, "%ld", value->data.int_val);
+            snprintf(str, 256, "%lld", (long long)value->data.int_val);
             break;
         case RDB_TYPE_FLOAT:
             snprintf(str, 256, "%.2f", value->data.float_val);
@@ -1490,15 +1765,13 @@ int rdb_update_rows(rdb_database_t *db, const char *table_name, fi_array *set_co
         rdb_row_t *row = *(rdb_row_t**)fi_array_get(table->rows, i);
         if (!row || !row->values) continue;
 
-        /* Check WHERE conditions (simplified - just check if conditions exist) */
-        bool matches = true;
-        if (where_conditions && fi_array_count(where_conditions) > 0) {
-            /* For now, assume all rows match if WHERE conditions are provided */
-            /* In a real implementation, this would evaluate the conditions */
-            matches = true;
-        }
+        /* Evaluate WHERE conditions */
+        bool matches = rdb_evaluate_where_conditions(table, row, where_conditions);
 
         if (matches) {
+            /* Remove old values from indexes for updated columns */
+            rdb_remove_from_table_indexes(table, row);
+
             /* Update the specified columns */
             for (size_t j = 0; j < fi_array_count(set_columns); j++) {
                 const char *col_name = *(const char**)fi_array_get(set_columns, j);
@@ -1527,6 +1800,10 @@ int rdb_update_rows(rdb_database_t *db, const char *table_name, fi_array *set_co
                     }
                 }
             }
+
+            /* Add new values to indexes */
+            rdb_update_table_indexes(table, row);
+
             updated_count++;
         }
     }
@@ -1558,15 +1835,13 @@ int rdb_delete_rows(rdb_database_t *db, const char *table_name, fi_array *where_
         rdb_row_t *row = *(rdb_row_t**)fi_array_get(table->rows, i - 1);
         if (!row) continue;
 
-        /* Check WHERE conditions (simplified - just check if conditions exist) */
-        bool matches = true;
-        if (where_conditions && fi_array_count(where_conditions) > 0) {
-            /* For now, assume all rows match if WHERE conditions are provided */
-            /* In a real implementation, this would evaluate the conditions */
-            matches = true;
-        }
+        /* Evaluate WHERE conditions */
+        bool matches = rdb_evaluate_where_conditions(table, row, where_conditions);
 
         if (matches) {
+            /* Remove from indexes before deleting */
+            rdb_remove_from_table_indexes(table, row);
+
             /* Remove from array and free memory */
             fi_array_splice(table->rows, i - 1, 1, NULL);
             rdb_row_free(row);
@@ -1599,20 +1874,44 @@ fi_array* rdb_select_rows(rdb_database_t *db, const char *table_name, fi_array *
         rdb_row_t *row = *(rdb_row_t**)fi_array_get(table->rows, i);
         if (!row) continue;
 
-        /* Check WHERE conditions (simplified - just check if conditions exist) */
-        bool matches = true;
-        if (where_conditions && fi_array_count(where_conditions) > 0) {
-            /* For now, assume all rows match if WHERE conditions are provided */
-            /* In a real implementation, this would evaluate the conditions */
-            matches = true;
-        }
+        /* Evaluate WHERE conditions */
+        bool matches = rdb_evaluate_where_conditions(table, row, where_conditions);
 
         if (matches) {
             /* Create a copy of the row for the result */
             rdb_row_t *row_copy = malloc(sizeof(rdb_row_t));
             if (row_copy) {
                 row_copy->row_id = row->row_id;
-                row_copy->values = fi_array_copy(row->values);
+                
+                /* Handle column selection */
+                if (columns && fi_array_count(columns) > 0) {
+                    /* Create new values array with only selected columns */
+                    row_copy->values = fi_array_create(fi_array_count(columns), sizeof(rdb_value_t*));
+                    if (row_copy->values) {
+                        for (size_t j = 0; j < fi_array_count(columns); j++) {
+                            const char *col_name = *(const char**)fi_array_get(columns, j);
+                            int col_index = rdb_get_column_index(table, col_name);
+                            if (col_index >= 0 && col_index < (int)fi_array_count(row->values)) {
+                                rdb_value_t *val = *(rdb_value_t**)fi_array_get(row->values, col_index);
+                                if (val) {
+                                    rdb_value_t *val_copy = rdb_value_copy(val);
+                                    if (val_copy) {
+                                        fi_array_push(row_copy->values, &val_copy);
+                                    }
+                                } else {
+                                    rdb_value_t *null_val = rdb_create_null_value(RDB_TYPE_INT);
+                                    if (null_val) {
+                                        fi_array_push(row_copy->values, &null_val);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    /* Select all columns */
+                    row_copy->values = fi_array_copy(row->values);
+                }
+                
                 if (row_copy->values) {
                     fi_array_push(result, &row_copy);
                 } else {
@@ -2706,14 +3005,13 @@ int rdb_update_rows_thread_safe(rdb_database_t *db, const char *table_name, fi_a
         rdb_row_t *row = *(rdb_row_t**)fi_array_get(table->rows, i);
         if (!row || !row->values) continue;
 
-        /* Check WHERE conditions (simplified - just check if conditions exist) */
-        bool matches = true;
-        if (where_conditions && fi_array_count(where_conditions) > 0) {
-            /* For simplicity, we'll assume all rows match if conditions exist */
-            /* In a real implementation, you'd evaluate the conditions here */
-        }
+        /* Evaluate WHERE conditions */
+        bool matches = rdb_evaluate_where_conditions(table, row, where_conditions);
 
         if (matches) {
+            /* Remove old values from indexes for updated columns */
+            rdb_remove_from_table_indexes(table, row);
+
             /* Update the row with new values */
             for (size_t j = 0; j < fi_array_count(set_columns); j++) {
                 const char *column_name = *(const char**)fi_array_get(set_columns, j);
@@ -2728,6 +3026,10 @@ int rdb_update_rows_thread_safe(rdb_database_t *db, const char *table_name, fi_a
                     }
                 }
             }
+
+            /* Add new values to indexes */
+            rdb_update_table_indexes(table, row);
+
             updated_count++;
         }
     }
@@ -2767,12 +3069,8 @@ int rdb_delete_rows_thread_safe(rdb_database_t *db, const char *table_name, fi_a
         rdb_row_t *row = *(rdb_row_t**)fi_array_get(table->rows, i - 1);
         if (!row) continue;
 
-        /* Check WHERE conditions (simplified - just check if conditions exist) */
-        bool matches = true;
-        if (where_conditions && fi_array_count(where_conditions) > 0) {
-            /* For simplicity, we'll assume all rows match if conditions exist */
-            /* In a real implementation, you'd evaluate the conditions here */
-        }
+        /* Evaluate WHERE conditions */
+        bool matches = rdb_evaluate_where_conditions(table, row, where_conditions);
 
         if (matches) {
             /* Create a copy of the old row for potential rollback */
@@ -2781,6 +3079,9 @@ int rdb_delete_rows_thread_safe(rdb_database_t *db, const char *table_name, fi_a
                 old_row->row_id = row->row_id;
                 old_row->values = fi_array_copy(row->values);
             }
+
+            /* Remove from indexes before deleting */
+            rdb_remove_from_table_indexes(table, row);
 
             /* Remove from array and free memory */
             fi_array_splice(table->rows, i - 1, 1, NULL);
@@ -2802,7 +3103,6 @@ int rdb_delete_rows_thread_safe(rdb_database_t *db, const char *table_name, fi_a
 
 fi_array* rdb_select_rows_thread_safe(rdb_database_t *db, const char *table_name, fi_array *columns,
                                      fi_array *where_conditions) {
-    (void)columns; /* Suppress unused parameter warning */
     if (!db || !table_name) return NULL;
 
     /* Lock database for read to get table */
@@ -2836,20 +3136,49 @@ fi_array* rdb_select_rows_thread_safe(rdb_database_t *db, const char *table_name
         rdb_row_t *row = *(rdb_row_t**)fi_array_get(table->rows, i);
         if (!row || !row->values) continue;
 
-        /* Check WHERE conditions (simplified - just check if conditions exist) */
-        bool matches = true;
-        if (where_conditions && fi_array_count(where_conditions) > 0) {
-            /* For simplicity, we'll assume all rows match if conditions exist */
-            /* In a real implementation, you'd evaluate the conditions here */
-        }
+        /* Evaluate WHERE conditions */
+        bool matches = rdb_evaluate_where_conditions(table, row, where_conditions);
 
         if (matches) {
             /* Create a copy of the row for the result */
             rdb_row_t *result_row = malloc(sizeof(rdb_row_t));
             if (result_row) {
                 result_row->row_id = row->row_id;
-                result_row->values = fi_array_copy(row->values);
-                fi_array_push(result, &result_row);
+                
+                /* Handle column selection */
+                if (columns && fi_array_count(columns) > 0) {
+                    /* Create new values array with only selected columns */
+                    result_row->values = fi_array_create(fi_array_count(columns), sizeof(rdb_value_t*));
+                    if (result_row->values) {
+                        for (size_t j = 0; j < fi_array_count(columns); j++) {
+                            const char *col_name = *(const char**)fi_array_get(columns, j);
+                            int col_index = rdb_get_column_index(table, col_name);
+                            if (col_index >= 0 && col_index < (int)fi_array_count(row->values)) {
+                                rdb_value_t *val = *(rdb_value_t**)fi_array_get(row->values, col_index);
+                                if (val) {
+                                    rdb_value_t *val_copy = rdb_value_copy(val);
+                                    if (val_copy) {
+                                        fi_array_push(result_row->values, &val_copy);
+                                    }
+                                } else {
+                                    rdb_value_t *null_val = rdb_create_null_value(RDB_TYPE_INT);
+                                    if (null_val) {
+                                        fi_array_push(result_row->values, &null_val);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    /* Select all columns */
+                    result_row->values = fi_array_copy(row->values);
+                }
+                
+                if (result_row->values) {
+                    fi_array_push(result, &result_row);
+                } else {
+                    free(result_row);
+                }
             }
         }
     }
